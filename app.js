@@ -292,7 +292,8 @@ async function renderPanelEntrenador(sesion) {
   app.innerHTML = `
     ${topbar("Panel de " + sesion.nombre, sesion)}
     <main>
-      <p class="pill-label" style="margin-top:16px">Tus alumnos</p>
+      <div style="margin-top:16px"><button class="primary" id="btn-importar">Subir nuevo plan (Excel)</button></div>
+      <p class="pill-label" style="margin-top:20px">Tus alumnos</p>
       ${filas.map((f, i) => `
         <div class="week-row" data-alumno="${i}" style="cursor:pointer">
           <div class="week-row-top">
@@ -307,6 +308,7 @@ async function renderPanelEntrenador(sesion) {
     </main>`;
 
   document.getElementById("btn-salir").addEventListener("click", cerrarSesion);
+  document.getElementById("btn-importar").addEventListener("click", () => renderImportarExcel(sesion));
   document.querySelectorAll("[data-reset]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -511,8 +513,220 @@ async function renderPanelAdmin(sesion) {
 }
 
 // ---------------------------------------------------------------
-// Pantalla: fallback para roles sin panel propio
+// Importador de Excel: subir → categorizar ejercicios nuevos → publicar → asignar
 // ---------------------------------------------------------------
+function parsearWorkbookExcel(workbook) {
+  const semanas = [];
+  for (const nombreHoja of workbook.SheetNames) {
+    const m = /^Semana\s*(\d+)/i.exec(nombreHoja.trim());
+    if (!m) continue;
+    const numeroSemana = parseInt(m[1]);
+    const filas = XLSX.utils.sheet_to_json(workbook.Sheets[nombreHoja], { header: 1, defval: null, raw: true });
+    const semana = { numero: numeroSemana, dias: [] };
+    let diaActual = null;
+    let orden = 0;
+    for (const fila of filas) {
+      const col0 = fila[0];
+      if (col0 === null || col0 === undefined || col0 === "") continue;
+      if (typeof col0 === "string" && col0.trim().toUpperCase().startsWith("DÍA")) {
+        const numDia = /\d+/.exec(col0);
+        diaActual = { numero: numDia ? parseInt(numDia[0]) : semana.dias.length + 1, ejercicios: [] };
+        semana.dias.push(diaActual);
+        orden = 0;
+        continue;
+      }
+      if (col0 === "Ejercicio") continue;
+      if (diaActual && typeof fila[1] === "number") {
+        orden++;
+        diaActual.ejercicios.push({
+          orden,
+          nombre_ejercicio: String(col0).trim(),
+          series: fila[1],
+          reps_objetivo: fila[2] != null ? String(fila[2]) : null,
+          rir: fila[3] != null ? Number(fila[3]) : null,
+          descanso: fila[4] != null ? String(fila[4]) : null,
+        });
+      }
+    }
+    semanas.push(semana);
+  }
+  return { semanas };
+}
+
+async function renderImportarExcel(sesion) {
+  app.innerHTML = `
+    ${topbar("Subir plan nuevo", sesion)}
+    <main>
+      <p class="form-note" style="text-align:left;margin:16px 0 0"><a href="#" id="link-volver-importar" style="color:inherit">‹ Panel</a></p>
+      <p class="lead" style="margin-top:16px">Selecciona el archivo Excel del plan (mismo formato de siempre: hojas "Semana N", con "DÍA X" y la tabla de ejercicios).</p>
+      <input type="file" id="input-excel" accept=".xlsx,.xls" />
+      <div id="resultado-importacion" style="margin-top:20px"></div>
+    </main>`;
+
+  document.getElementById("btn-salir").addEventListener("click", cerrarSesion);
+  document.getElementById("link-volver-importar").addEventListener("click", (e) => { e.preventDefault(); renderPanelEntrenador(sesion); });
+
+  document.getElementById("input-excel").addEventListener("change", async (e) => {
+    const archivo = e.target.files[0];
+    if (!archivo) return;
+    const resultadoEl = document.getElementById("resultado-importacion");
+    resultadoEl.innerHTML = `<p class="lead">Leyendo archivo…</p>`;
+
+    let programa;
+    try {
+      const buffer = await archivo.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      programa = parsearWorkbookExcel(workbook);
+    } catch {
+      resultadoEl.innerHTML = `<p class="form-error">No se pudo leer el archivo. Comprueba que sea un .xlsx válido.</p>`;
+      return;
+    }
+
+    if (programa.semanas.length === 0) {
+      resultadoEl.innerHTML = `<p class="form-error">No se han encontrado hojas "Semana N" en el archivo.</p>`;
+      return;
+    }
+
+    const catalogo = await restGet(sesion, `ejercicios_catalogo?select=nombre`);
+    const nombresConocidos = new Set(catalogo.map((c) => c.nombre.toLowerCase()));
+    const noReconocidos = new Set();
+    let totalDias = 0, totalEjercicios = 0, totalSeries = 0;
+    for (const semana of programa.semanas) {
+      totalDias += semana.dias.length;
+      for (const dia of semana.dias) {
+        for (const ej of dia.ejercicios) {
+          totalEjercicios++;
+          totalSeries += ej.series;
+          if (!nombresConocidos.has(ej.nombre_ejercicio.toLowerCase())) noReconocidos.add(ej.nombre_ejercicio);
+        }
+      }
+    }
+
+    const listaNoReconocidos = [...noReconocidos];
+
+    resultadoEl.innerHTML = `
+      <div class="week-row">
+        <div class="week-row-top"><span>Resumen</span></div>
+        <p style="margin:8px 0 0;font-size:14px;color:var(--steel)">
+          ${programa.semanas.length} semanas · ${totalDias} días · ${totalEjercicios} filas de ejercicio · ${totalSeries} series totales
+        </p>
+      </div>
+
+      ${listaNoReconocidos.length ? `
+        <p class="pill-label" style="margin-top:20px">Ejercicios nuevos — indica su grupo muscular y tipo</p>
+        <p class="form-note" style="text-align:left">Se guardarán en tu catálogo para la próxima vez.</p>
+        ${listaNoReconocidos.map((nombre, i) => `
+          <div class="week-row">
+            <div class="week-row-top"><span>${nombre}</span></div>
+            <div class="field" style="margin-top:10px"><input id="grupo-${i}" placeholder="Grupo muscular (ej. Pecho, Espalda…)" required /></div>
+            <div class="field">
+              <select id="tipo-${i}" style="width:100%;border:1px solid var(--line);background:var(--surface);border-radius:var(--radius);padding:12px 14px">
+                <option value="reps">Repeticiones</option>
+                <option value="segundos">Segundos</option>
+              </select>
+            </div>
+          </div>`).join("")}
+      ` : ""}
+
+      <div class="field" style="margin-top:20px">
+        <label for="nombre-programa">Nombre del programa</label>
+        <input id="nombre-programa" value="${archivo.name.replace(/\.[^.]+$/, "")}" />
+      </div>
+      <button class="primary" id="btn-publicar">Publicar plan</button>
+      <p class="form-note">Antes de que lo vean tus alumnos, tendrás que asignárselo en el paso siguiente.</p>`;
+
+    document.getElementById("btn-publicar").addEventListener("click", async () => {
+      const btn = document.getElementById("btn-publicar");
+      btn.disabled = true;
+      btn.innerHTML = `<span class="spinner"></span>`;
+      try {
+        // 1. Da de alta los ejercicios nuevos en el catálogo propio del entrenador
+        for (let i = 0; i < listaNoReconocidos.length; i++) {
+          const grupo = document.getElementById(`grupo-${i}`).value.trim();
+          const tipo = document.getElementById(`tipo-${i}`).value;
+          if (!grupo) throw new Error("falta_grupo_muscular");
+          const res = await fetch(`${SUPABASE_URL}/rest/v1/ejercicios_catalogo`, {
+            method: "POST",
+            headers: { ...headersRest(sesion), Prefer: "return=minimal" },
+            body: JSON.stringify({
+              entrenador_id: sesion.entrenador_id,
+              nombre: listaNoReconocidos[i],
+              grupo_muscular: grupo,
+              tipo_metrica: tipo,
+            }),
+          });
+          if (!res.ok) throw new Error("error_catalogo");
+        }
+
+        // 2. Crea el programa en borrador
+        const nombrePrograma = document.getElementById("nombre-programa").value.trim() || "Programa sin nombre";
+        const resPrograma = await fetch(`${SUPABASE_URL}/rest/v1/programas`, {
+          method: "POST",
+          headers: { ...headersRest(sesion), Prefer: "return=representation" },
+          body: JSON.stringify({ entrenador_id: sesion.entrenador_id, nombre: nombrePrograma, estado: "borrador" }),
+        });
+        if (!resPrograma.ok) throw new Error("error_programa");
+        const [programaCreado] = await resPrograma.json();
+
+        // 3. Guarda el borrador de importación
+        const resBorrador = await fetch(`${SUPABASE_URL}/rest/v1/importaciones_borrador`, {
+          method: "POST",
+          headers: { ...headersRest(sesion), Prefer: "return=representation" },
+          body: JSON.stringify({ programa_id: programaCreado.id, estado_revision: "pendiente", datos: programa }),
+        });
+        if (!resBorrador.ok) throw new Error("error_borrador");
+        const [borradorCreado] = await resBorrador.json();
+
+        // 4. Publica (materializa semanas/días/series_prescritas)
+        const resPublicar = await fetch(`${SUPABASE_URL}/rest/v1/rpc/publicar_programa`, {
+          method: "POST",
+          headers: headersRest(sesion),
+          body: JSON.stringify({ p_borrador_id: borradorCreado.id }),
+        });
+        if (!resPublicar.ok) throw new Error("error_publicar");
+
+        renderAsignarPrograma(sesion, programaCreado.id, nombrePrograma);
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = "Publicar plan";
+        if (err.message === "falta_grupo_muscular") {
+          alert("Falta indicar el grupo muscular de algún ejercicio nuevo.");
+        } else {
+          alert("No se pudo publicar el plan. Revisa los datos e inténtalo de nuevo.");
+        }
+      }
+    });
+  });
+}
+
+async function renderAsignarPrograma(sesion, programaId, nombrePrograma) {
+  const alumnos = await restGet(sesion, `usuarios?entrenador_id=eq.${sesion.entrenador_id}&rol=eq.alumno&select=id,nombre&order=nombre`);
+  app.innerHTML = `
+    ${topbar("Asignar plan", sesion)}
+    <main>
+      <p class="lead" style="margin-top:16px">"${nombrePrograma}" se ha publicado. ¿A quién se lo asignas?</p>
+      ${alumnos.map((a) => `
+        <label style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)">
+          <input type="checkbox" data-alumno="${a.id}" />
+          <span>${a.nombre}</span>
+        </label>`).join("")}
+      <button class="primary" id="btn-asignar" style="margin-top:20px">Asignar a los seleccionados</button>
+    </main>`;
+  document.getElementById("btn-salir").addEventListener("click", cerrarSesion);
+  document.getElementById("btn-asignar").addEventListener("click", async () => {
+    const seleccionados = [...document.querySelectorAll("[data-alumno]:checked")].map((c) => c.dataset.alumno);
+    if (seleccionados.length === 0) { renderPanelEntrenador(sesion); return; }
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/asignaciones`, {
+        method: "POST",
+        headers: { ...headersRest(sesion), Prefer: "return=minimal" },
+        body: JSON.stringify(seleccionados.map((usuario_id) => ({ usuario_id, programa_id: programaId }))),
+      });
+    } catch { /* si falla, el entrenador puede reintentar la asignación luego */ }
+    renderPanelEntrenador(sesion);
+  });
+}
+
 function renderNoDisponibleParaRol(sesion) {
   app.innerHTML = `
     ${topbar(sesion.nombre, sesion)}
