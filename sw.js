@@ -1,7 +1,7 @@
 // Sube este número en CADA despliegue (aunque solo cambies una coma).
 // Es lo único que fuerza a los móviles que ya tienen la app instalada
 // a descargar la versión nueva en vez de quedarse con la de caché.
-const CACHE_VERSION = "v6";
+const CACHE_VERSION = "v7";
 const CACHE_NAME = `entreno-shell-${CACHE_VERSION}`;
 
 const APP_SHELL = [
