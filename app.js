@@ -65,6 +65,17 @@ function headersRest(sesion) {
   };
 }
 
+async function llamarFuncion(sesion, nombre, body) {
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/${nombre}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${sesion.access_token}` },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "error_desconocido");
+  return data;
+}
+
 async function restGet(sesion, path) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { headers: headersRest(sesion) });
   if (!res.ok) throw new Error(`Error de red (${res.status})`);
@@ -228,13 +239,22 @@ async function renderPanelEntrenador(sesion) {
         <div class="week-row" data-alumno="${i}" style="cursor:pointer">
           <div class="week-row-top">
             <span>${f.alumno.nombre}</span>
-            <span class="week-status">${f.programaNombre ? f.pct + "%" : "Sin programa"}</span>
+            <span style="display:flex;align-items:center;gap:10px">
+              <span class="week-status">${f.programaNombre ? f.pct + "%" : "Sin programa"}</span>
+              <button class="skip-btn" data-reset="${f.alumno.id}" data-nombre="${f.alumno.nombre}">Resetear PIN</button>
+            </span>
           </div>
           ${f.programaNombre ? `<div class="week-bar-track"><div class="week-bar-fill ${f.pct === 100 ? "completo" : "en_progreso"}" style="width:${f.pct}%"></div></div>` : ""}
         </div>`).join("")}
     </main>`;
 
   document.getElementById("btn-salir").addEventListener("click", cerrarSesion);
+  document.querySelectorAll("[data-reset]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      resetearPinConfirmando(sesion, { id: btn.dataset.reset, nombre: btn.dataset.nombre }, () => renderPanelEntrenador(sesion));
+    });
+  });
   document.querySelectorAll("[data-alumno]").forEach((row) => {
     row.addEventListener("click", () => {
       const f = filas[parseInt(row.dataset.alumno)];
@@ -279,13 +299,90 @@ function renderDetalleAlumno(sesion, f) {
 // ---------------------------------------------------------------
 // Pantalla: solo alumnos por ahora
 // ---------------------------------------------------------------
+// ---------------------------------------------------------------
+// Botón reutilizable de resetear PIN (admin y entrenador)
+// ---------------------------------------------------------------
+async function resetearPinConfirmando(sesion, usuario, alRefrescar) {
+  if (!confirm(`¿Generar un PIN nuevo para ${usuario.nombre}? El PIN actual dejará de funcionar.`)) return;
+  try {
+    const resultado = await llamarFuncion(sesion, "resetear-pin", { usuario_id: usuario.id });
+    alert(`Nuevo PIN de ${usuario.nombre}: ${resultado.pin}\n\nApúntalo ahora, no se puede volver a mostrar.`);
+    if (alRefrescar) alRefrescar();
+  } catch {
+    alert("No se pudo generar el PIN nuevo. Inténtalo de nuevo.");
+  }
+}
+
+// ---------------------------------------------------------------
+// Panel del admin: entrenadores + alta de entrenadores nuevos
+// ---------------------------------------------------------------
+async function renderPanelAdmin(sesion) {
+  app.innerHTML = `${topbar("Panel de administración", sesion)}<main><p class="lead">Cargando…</p></main>`;
+
+  const entrenadores = await restGet(sesion, `entrenadores?select=id,nombre&order=nombre`);
+  const usuarios = await restGet(sesion, `usuarios?rol=eq.entrenador&select=id,nombre,entrenador_id`);
+
+  const filasEntrenador = entrenadores.map((e) => {
+    const persona = usuarios.find((u) => u.entrenador_id === e.id);
+    return `
+      <div class="week-row">
+        <div class="week-row-top">
+          <span>${e.nombre}</span>
+          ${persona ? `<button class="skip-btn" data-reset="${persona.id}" data-nombre="${persona.nombre}">Resetear PIN</button>` : ""}
+        </div>
+      </div>`;
+  }).join("") || `<p class="lead">Todavía no hay entrenadores creados.</p>`;
+
+  app.innerHTML = `
+    ${topbar("Panel de administración", sesion)}
+    <main>
+      <p class="pill-label" style="margin-top:16px">Entrenadores</p>
+      ${filasEntrenador}
+
+      <p class="pill-label" style="margin-top:24px">Crear entrenador nuevo</p>
+      <form id="form-nuevo-entrenador">
+        <div class="field">
+          <label for="nombre-entrenador">Nombre del entrenador</label>
+          <input id="nombre-entrenador" required />
+        </div>
+        <div class="field">
+          <label for="nombre-grupo">Nombre del grupo/gimnasio</label>
+          <input id="nombre-grupo" required />
+        </div>
+        <button type="submit" class="primary">Crear</button>
+      </form>
+    </main>`;
+
+  document.getElementById("btn-salir").addEventListener("click", cerrarSesion);
+  document.querySelectorAll("[data-reset]").forEach((btn) => {
+    btn.addEventListener("click", () =>
+      resetearPinConfirmando(sesion, { id: btn.dataset.reset, nombre: btn.dataset.nombre }, () => renderPanelAdmin(sesion))
+    );
+  });
+  document.getElementById("form-nuevo-entrenador").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const nombre = document.getElementById("nombre-entrenador").value.trim();
+    const nombreGrupo = document.getElementById("nombre-grupo").value.trim();
+    try {
+      const resultado = await llamarFuncion(sesion, "crear-usuario", { rol: "entrenador", nombre, nombre_entrenador: nombreGrupo });
+      alert(`Entrenador creado. PIN de ${nombre}: ${resultado.pin}\n\nApúntalo ahora, no se puede volver a mostrar.`);
+      renderPanelAdmin(sesion);
+    } catch {
+      alert("No se pudo crear el entrenador. Inténtalo de nuevo.");
+    }
+  });
+}
+
+// ---------------------------------------------------------------
+// Pantalla: fallback para roles sin panel propio
+// ---------------------------------------------------------------
 function renderNoDisponibleParaRol(sesion) {
   app.innerHTML = `
     ${topbar(sesion.nombre, sesion)}
     <main>
       <div class="screen-center">
         <h1>Ya casi</h1>
-        <p class="lead">El panel de entrenador/admin llega en la próxima fase. De momento esta app registra el entrenamiento de los alumnos.</p>
+        <p class="lead">Este rol todavía no tiene panel propio.</p>
       </div>
     </main>`;
   document.getElementById("btn-salir").addEventListener("click", cerrarSesion);
@@ -658,6 +755,7 @@ function conectarEjercicio(sesion, prescrita) {
 function render() {
   const sesion = leerSesion();
   if (!sesion) return renderLogin(null);
+  if (sesion.rol === "admin") return renderPanelAdmin(sesion);
   if (sesion.rol === "entrenador") return renderPanelEntrenador(sesion);
   if (sesion.rol !== "alumno") return renderNoDisponibleParaRol(sesion);
   renderHome(sesion);
