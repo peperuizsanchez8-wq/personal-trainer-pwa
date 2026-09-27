@@ -264,12 +264,14 @@ async function renderPanelEntrenador(sesion) {
 }
 
 function renderDetalleAlumno(sesion, f) {
-  const filasSemana = f.dias.reduce((acc, d) => {
+  const semanasAgrupadas = f.dias.reduce((acc, d) => {
     let semana = acc.find((s) => s.numero === d.semanaNumero);
     if (!semana) { semana = { numero: d.semanaNumero, dias: [] }; acc.push(semana); }
     semana.dias.push(d);
     return acc;
-  }, []).map((semana) => {
+  }, []);
+
+  const filasSemana = semanasAgrupadas.map((semana) => {
     const completos = semana.dias.filter((d) => d.estado === "completo").length;
     const total = semana.dias.reduce((a, d) => a + d.total, 0);
     const completadas = semana.dias.reduce((a, d) => a + d.completadas, 0);
@@ -281,6 +283,9 @@ function renderDetalleAlumno(sesion, f) {
       <div class="week-row">
         <div class="week-row-top"><span>Semana ${semana.numero}</span><span class="week-status">${etiqueta}</span></div>
         <div class="week-bar-track"><div class="week-bar-fill ${completos === semana.dias.length ? "completo" : "en_progreso"}" style="width:${pct}%"></div></div>
+        <div class="pill-row" style="padding-top:10px">
+          ${semana.dias.map((d) => `<button class="pill" data-dia-idx="${f.dias.indexOf(d)}">Día ${d.diaNumero}</button>`).join("")}
+        </div>
       </div>`;
   }).join("");
 
@@ -289,11 +294,76 @@ function renderDetalleAlumno(sesion, f) {
     <main>
       <p class="form-note" style="text-align:left;margin:16px 0 0"><a href="#" id="link-volver" style="color:inherit">‹ Alumnos</a></p>
       <div style="display:flex;justify-content:center;margin-top:12px">${anilloProgreso(f.pct, f.programaNombre)}</div>
-      <p class="pill-label" style="margin-top:20px">Progreso por semana</p>
+      <p class="pill-label" style="margin-top:20px">Progreso por semana — toca un día para ver el detalle</p>
       ${filasSemana}
     </main>`;
   document.getElementById("btn-salir").addEventListener("click", cerrarSesion);
+  document.querySelectorAll("[data-dia-idx]").forEach((btn) => {
+    btn.addEventListener("click", () => renderDetalleDia(sesion, f, f.dias[parseInt(btn.dataset.diaIdx)]));
+  });
   document.getElementById("link-volver").addEventListener("click", (e) => { e.preventDefault(); renderPanelEntrenador(sesion); });
+}
+
+// ---------------------------------------------------------------
+// Detalle de un día concreto de un alumno, en solo lectura
+// ---------------------------------------------------------------
+function renderEjercicioSoloLectura(prescrita, registradas) {
+  const esSegundos = prescrita.ejercicios_catalogo.tipo_metrica === "segundos";
+  const unidad = esSegundos ? "s" : "reps";
+  const filas = Array.from({ length: prescrita.series }, (_, i) => {
+    const n = i + 1;
+    const r = registradas.find((x) => x.serie_prescrita_id === prescrita.id && x.numero_serie === n);
+    const peso = r && r.peso_real != null ? r.peso_real : "–";
+    const valor = r && r.valor_real != null ? r.valor_real : "–";
+    const done = !!(r && r.completada);
+    return `
+      <div class="set-row">
+        <div class="set-index">${n}</div>
+        <div class="stepper${done ? " done" : ""}"><div class="value num" style="width:100%;text-align:center">${peso} kg</div></div>
+        <div class="stepper${done ? " done" : ""}"><div class="value num" style="width:100%;text-align:center">${valor} ${unidad}</div></div>
+        <div class="check-btn${done ? " done" : ""}">${icon("check")}</div>
+      </div>`;
+  }).join("");
+  const comentarios = registradas
+    .filter((r) => r.serie_prescrita_id === prescrita.id && r.comentario)
+    .map((r) => r.comentario);
+
+  return `
+    <div class="exercise">
+      <div class="exercise-head">
+        <h2>${prescrita.ejercicios_catalogo.nombre}</h2>
+        <div class="meta">${prescrita.series} series · ${prescrita.reps_objetivo} ${unidad === "s" ? "" : "reps"} · RIR ${prescrita.rir ?? "–"}</div>
+      </div>
+      ${filas}
+      ${comentarios.length ? `<p class="form-note" style="text-align:left;margin-top:10px">Nota: ${comentarios.join(" · ")}</p>` : ""}
+    </div>`;
+}
+
+async function renderDetalleDia(sesion, f, dia) {
+  app.innerHTML = `${topbar(f.alumno.nombre, sesion)}<main><p class="lead">Cargando…</p></main>`;
+
+  const prescritas = await restGet(
+    sesion,
+    `series_prescritas?dia_id=eq.${dia.diaId}&select=id,orden,series,reps_objetivo,rir,descanso,ejercicios_catalogo(id,nombre,tipo_metrica)&order=orden`
+  );
+  const ids = prescritas.map((p) => p.id);
+  const registradas = ids.length
+    ? await restGet(sesion, `series_registradas?serie_prescrita_id=in.(${ids.join(",")})&usuario_id=eq.${f.alumno.id}&select=serie_prescrita_id,numero_serie,peso_real,valor_real,completada,comentario`)
+    : [];
+
+  app.innerHTML = `
+    ${topbar(f.alumno.nombre, sesion)}
+    <main>
+      <p class="form-note" style="text-align:left;margin:16px 0 0"><a href="#" id="link-volver-detalle" style="color:inherit">‹ Semana ${dia.semanaNumero}</a></p>
+      <p class="pill-label" style="margin-top:12px">Semana ${dia.semanaNumero} · Día ${dia.diaNumero}</p>
+      ${prescritas.map((p) => renderEjercicioSoloLectura(p, registradas)).join("")}
+    </main>`;
+
+  document.getElementById("btn-salir").addEventListener("click", cerrarSesion);
+  document.getElementById("link-volver-detalle").addEventListener("click", (e) => {
+    e.preventDefault();
+    renderDetalleAlumno(sesion, f);
+  });
 }
 
 // ---------------------------------------------------------------
@@ -321,22 +391,29 @@ async function renderPanelAdmin(sesion) {
 
   const entrenadores = await restGet(sesion, `entrenadores?select=id,nombre&order=nombre`);
   const usuarios = await restGet(sesion, `usuarios?rol=eq.entrenador&select=id,nombre,entrenador_id`);
+  const alumnos = await restGet(sesion, `usuarios?rol=eq.alumno&select=id,nombre,entrenador_id&order=nombre`);
 
   const filasEntrenador = entrenadores.map((e) => {
     const persona = usuarios.find((u) => u.entrenador_id === e.id);
+    const alumnosDelGrupo = alumnos.filter((a) => a.entrenador_id === e.id);
     return `
       <div class="week-row">
         <div class="week-row-top">
           <span>${e.nombre}</span>
           ${persona ? `<button class="skip-btn" data-reset="${persona.id}" data-nombre="${persona.nombre}">Resetear PIN</button>` : ""}
         </div>
+        ${alumnosDelGrupo.map((a) => `
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-left:12px">
+            <span style="font-size:14px;color:var(--steel)">${a.nombre}</span>
+            <button class="skip-btn" data-reset="${a.id}" data-nombre="${a.nombre}">Resetear PIN</button>
+          </div>`).join("")}
       </div>`;
   }).join("") || `<p class="lead">Todavía no hay entrenadores creados.</p>`;
 
   app.innerHTML = `
     ${topbar("Panel de administración", sesion)}
     <main>
-      <p class="pill-label" style="margin-top:16px">Entrenadores</p>
+      <p class="pill-label" style="margin-top:16px">Entrenadores y sus alumnos</p>
       ${filasEntrenador}
 
       <p class="pill-label" style="margin-top:24px">Crear entrenador nuevo</p>
