@@ -92,7 +92,24 @@ async function rpc(sesion, nombre, args) {
   return res.json();
 }
 
-async function guardarSerieRegistrada(sesion, fila) {
+// ---------------------------------------------------------------
+// Cola de guardado offline: si falla la red, se encola y se reintenta
+// automáticamente en cuanto vuelva la conexión.
+// ---------------------------------------------------------------
+function colaLeer() {
+  try { return JSON.parse(localStorage.getItem("cola_pendiente") || "[]"); } catch { return []; }
+}
+function colaGuardar(cola) {
+  localStorage.setItem("cola_pendiente", JSON.stringify(cola));
+  actualizarIndicadorCola();
+}
+function actualizarIndicadorCola() {
+  const n = colaLeer().length;
+  const el = document.getElementById("indicador-cola");
+  if (el) el.textContent = n > 0 ? `${n} serie${n > 1 ? "s" : ""} pendiente${n > 1 ? "s" : ""} de sincronizar` : "";
+}
+
+async function enviarSerieRegistrada(sesion, fila) {
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/series_registradas?on_conflict=serie_prescrita_id,usuario_id,numero_serie`,
     {
@@ -103,6 +120,36 @@ async function guardarSerieRegistrada(sesion, fila) {
   );
   if (!res.ok) throw new Error(`No se pudo guardar (${res.status})`);
   return res.json();
+}
+
+async function sincronizarCola(sesion) {
+  const cola = colaLeer();
+  if (cola.length === 0) return;
+  const restante = [];
+  for (const item of cola) {
+    try {
+      await enviarSerieRegistrada(sesion, item.fila);
+    } catch {
+      restante.push(item);
+    }
+  }
+  colaGuardar(restante);
+}
+
+async function guardarSerieRegistrada(sesion, fila) {
+  try {
+    return await enviarSerieRegistrada(sesion, fila);
+  } catch (err) {
+    if (err instanceof TypeError) {
+      // Fallo de red real (sin conexión): se guarda en el móvil y se
+      // reintenta solo en cuanto vuelva a haber señal, sin perder el dato.
+      const cola = colaLeer();
+      cola.push({ id: crypto.randomUUID(), fila });
+      colaGuardar(cola);
+      return { encolado: true };
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------
@@ -211,6 +258,12 @@ function porcentaje(dias) {
   return total > 0 ? Math.round((completadas / total) * 100) : 0;
 }
 
+function semanaEsperadaActual(creadaEn, totalSemanas) {
+  const diasTranscurridos = (Date.now() - new Date(creadaEn).getTime()) / 86_400_000;
+  const semanas = Math.floor(diasTranscurridos / 7) + 1;
+  return Math.min(semanas, totalSemanas);
+}
+
 async function renderPanelEntrenador(sesion) {
   app.innerHTML = `${topbar("Panel de " + sesion.nombre, sesion)}<main><p class="lead">Cargando tus alumnos…</p></main>`;
 
@@ -220,15 +273,20 @@ async function renderPanelEntrenador(sesion) {
   for (const alumno of alumnos) {
     const asignaciones = await restGet(
       sesion,
-      `asignaciones?usuario_id=eq.${alumno.id}&activa=eq.true&select=programa_id,programas(nombre,estado)&order=created_at.desc&limit=1`
+      `asignaciones?usuario_id=eq.${alumno.id}&activa=eq.true&select=programa_id,created_at,programas(nombre,estado)&order=created_at.desc&limit=1`
     );
     const asignacion = asignaciones.find((a) => a.programas && a.programas.estado === "publicado");
     if (!asignacion) {
       filas.push({ alumno, programaNombre: null, pct: 0, dias: [] });
       continue;
     }
-    const { dias } = await calcularDiasConEstado(sesion, alumno.id, asignacion.programa_id);
-    filas.push({ alumno, programaNombre: asignacion.programas.nombre, programaId: asignacion.programa_id, pct: porcentaje(dias), dias });
+    const { semanas, dias } = await calcularDiasConEstado(sesion, alumno.id, asignacion.programa_id);
+    const semanaEsperada = semanaEsperadaActual(asignacion.created_at, semanas.length);
+    const atrasado = dias.some((d) => d.semanaNumero < semanaEsperada && d.estado !== "completo");
+    filas.push({
+      alumno, programaNombre: asignacion.programas.nombre, programaId: asignacion.programa_id,
+      pct: porcentaje(dias), dias, semanaEsperada, atrasado,
+    });
   }
 
   app.innerHTML = `
@@ -238,7 +296,7 @@ async function renderPanelEntrenador(sesion) {
       ${filas.map((f, i) => `
         <div class="week-row" data-alumno="${i}" style="cursor:pointer">
           <div class="week-row-top">
-            <span>${f.alumno.nombre}</span>
+            <span>${f.alumno.nombre}${f.atrasado ? ' <span style="color:var(--danger);font-size:12px;font-weight:600">· atrasado</span>' : ""}</span>
             <span style="display:flex;align-items:center;gap:10px">
               <span class="week-status">${f.programaNombre ? f.pct + "%" : "Sin programa"}</span>
               <button class="skip-btn" data-reset="${f.alumno.id}" data-nombre="${f.alumno.nombre}">Resetear PIN</button>
@@ -276,13 +334,15 @@ function renderDetalleAlumno(sesion, f) {
     const total = semana.dias.reduce((a, d) => a + d.total, 0);
     const completadas = semana.dias.reduce((a, d) => a + d.completadas, 0);
     const pct = total > 0 ? Math.round((completadas / total) * 100) : 0;
+    const atrasada = f.semanaEsperada && semana.numero < f.semanaEsperada && completos < semana.dias.length;
     let etiqueta = "Sin empezar";
     if (completos === semana.dias.length) etiqueta = "Completada";
     else if (semana.dias.some((d) => d.estado !== "pendiente")) etiqueta = `En progreso · ${completos}/${semana.dias.length} días`;
+    if (atrasada) etiqueta += " · atrasada";
     return `
       <div class="week-row">
-        <div class="week-row-top"><span>Semana ${semana.numero}</span><span class="week-status">${etiqueta}</span></div>
-        <div class="week-bar-track"><div class="week-bar-fill ${completos === semana.dias.length ? "completo" : "en_progreso"}" style="width:${pct}%"></div></div>
+        <div class="week-row-top"><span>Semana ${semana.numero}</span><span class="week-status${atrasada ? " danger" : ""}">${etiqueta}</span></div>
+        <div class="week-bar-track"><div class="week-bar-fill ${atrasada ? "danger" : completos === semana.dias.length ? "completo" : "en_progreso"}" style="width:${pct}%"></div></div>
         <div class="pill-row" style="padding-top:10px">
           ${semana.dias.map((d) => `<button class="pill" data-dia-idx="${f.dias.indexOf(d)}">Día ${d.diaNumero}</button>`).join("")}
         </div>
@@ -618,9 +678,13 @@ async function renderHome(sesion) {
         <div class="pill-row" id="pills-dia">
           ${dias.map((d) => `<button class="pill${d.id === diaId ? " active" : ""}" data-id="${d.id}">Día ${d.numero}</button>`).join("")}
         </div>
+        <div id="volumen-semana"></div>
         <div id="contenido-dia"><p class="lead">Cargando ejercicios…</p></div>
       </main>
-      <div class="bottombar"><div class="inner"><button class="primary" id="btn-terminar">Terminar sesión</button></div></div>`;
+      <div class="bottombar"><div class="inner">
+        <p id="indicador-cola" class="form-note" style="margin:0 0 8px"></p>
+        <button class="primary" id="btn-terminar">Terminar sesión</button>
+      </div></div>`;
 
     document.getElementById("btn-salir").addEventListener("click", cerrarSesion);
     document.getElementById("btn-terminar").addEventListener("click", () => pintarResumen());
@@ -642,7 +706,31 @@ async function renderHome(sesion) {
       })
     );
 
+    actualizarIndicadorCola();
+    sincronizarCola(sesion).then(actualizarIndicadorCola);
+    pintarVolumenSemana(dias);
     pintarDia(diaId);
+  }
+
+  async function pintarVolumenSemana(dias) {
+    const el = document.getElementById("volumen-semana");
+    if (!el || dias.length === 0) return;
+    const prescritas = await restGet(
+      sesion,
+      `series_prescritas?dia_id=in.(${dias.map((d) => d.id).join(",")})&select=series,ejercicios_catalogo(grupo_muscular)`
+    );
+    const porGrupo = {};
+    for (const p of prescritas) {
+      const g = p.ejercicios_catalogo.grupo_muscular;
+      porGrupo[g] = (porGrupo[g] || 0) + p.series;
+    }
+    const filas = Object.entries(porGrupo).sort((a, b) => b[1] - a[1]);
+    el.innerHTML = `
+      <p class="pill-label" style="margin-top:18px">Volumen de la semana</p>
+      ${filas.map(([g, n]) => `
+        <div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid var(--line);font-size:14px">
+          <span>${g}</span><span class="num" style="color:var(--steel)">${n} series</span>
+        </div>`).join("")}`;
   }
 
   async function pintarDia(diaId) {
@@ -846,5 +934,9 @@ if ("serviceWorker" in navigator) {
     reg.update();
   });
 }
+window.addEventListener("online", () => {
+  const sesion = leerSesion();
+  if (sesion) sincronizarCola(sesion).then(actualizarIndicadorCola);
+});
 
 render();
