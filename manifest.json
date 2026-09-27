@@ -2,16 +2,16 @@
   "name": "Entrenamiento",
   "short_name": "Entreno",
   "description": "Registro de entrenamientos: series, peso y repeticiones",
-  "start_url": "./index.html",
+  "start_url": "./index.html?e=4e835ca1-ec2d-46a3-8771-f7b5115589e0",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#f2f1ed",
   "theme_color": "#1a2332",
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }
