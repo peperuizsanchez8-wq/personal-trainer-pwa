@@ -717,6 +717,11 @@ async function renderAsignarPrograma(sesion, programaId, nombrePrograma) {
     const seleccionados = [...document.querySelectorAll("[data-alumno]:checked")].map((c) => c.dataset.alumno);
     if (seleccionados.length === 0) { renderPanelEntrenador(sesion); return; }
     try {
+      // Cierra cualquier plan activo anterior de estos alumnos: uno activo a la vez, sin ambigüedad.
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/asignaciones?usuario_id=in.(${seleccionados.join(",")})&activa=eq.true`,
+        { method: "PATCH", headers: { ...headersRest(sesion), Prefer: "return=minimal" }, body: JSON.stringify({ activa: false }) }
+      );
       await fetch(`${SUPABASE_URL}/rest/v1/asignaciones`, {
         method: "POST",
         headers: { ...headersRest(sesion), Prefer: "return=minimal" },
