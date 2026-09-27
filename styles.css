@@ -353,6 +353,18 @@ p.lead { color: var(--steel); margin: 0 0 24px; font-size: 15px; }
 .note-input:focus { outline: none; border-bottom-color: var(--accent); }
 .note-input::placeholder { color: var(--steel); }
 
+.rir-input {
+  flex: 0 0 56px;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  background: none;
+  padding: 6px 0;
+  font-size: 14px;
+  text-align: center;
+}
+.rir-input:focus { outline: none; border-bottom-color: var(--accent); }
+.rir-input::placeholder { color: var(--steel); font-size: 11px; }
+
 .skip-btn {
   flex: 0 0 auto;
   background: none;
