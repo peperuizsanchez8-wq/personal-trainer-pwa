@@ -246,34 +246,55 @@ async function renderHome(sesion) {
         semanaId: semana.id, semanaNumero: semana.numero,
         diaId: dia.id, diaNumero: dia.numero,
         estado: estadoDia(fila),
+        total: fila ? Number(fila.total_series) : 0,
+        completadas: fila ? Number(fila.series_completadas) : 0,
       });
     }
+  }
+
+  function anilloProgreso(pct) {
+    const r = 34, c = 2 * Math.PI * r;
+    const offset = c * (1 - pct / 100);
+    return `
+      <div class="progress-ring">
+        <svg viewBox="0 0 80 80">
+          <circle class="track" cx="40" cy="40" r="${r}" />
+          <circle class="fill" cx="40" cy="40" r="${r}" stroke-dasharray="${c}" stroke-dashoffset="${offset}" />
+        </svg>
+        <div class="progress-ring-label"><span class="num">${pct}%</span><span>del programa</span></div>
+      </div>`;
   }
 
   function pintarResumen() {
     const siguiente = diasConEstado.find((d) => d.estado !== "completo") || diasConEstado[diasConEstado.length - 1];
     const todoCompleto = diasConEstado.every((d) => d.estado === "completo");
 
+    const totalPrograma = diasConEstado.reduce((acc, d) => acc + d.total, 0);
+    const completadasPrograma = diasConEstado.reduce((acc, d) => acc + d.completadas, 0);
+    const pctPrograma = totalPrograma > 0 ? Math.round((completadasPrograma / totalPrograma) * 100) : 0;
+
     const filasSemana = semanas.map((semana) => {
       const diasSemana = diasConEstado.filter((d) => d.semanaId === semana.id);
       const completos = diasSemana.filter((d) => d.estado === "completo").length;
       const enProgreso = diasSemana.some((d) => d.estado !== "pendiente");
+      const totalSemana = diasSemana.reduce((acc, d) => acc + d.total, 0);
+      const completadasSemana = diasSemana.reduce((acc, d) => acc + d.completadas, 0);
+      const pctSemana = totalSemana > 0 ? Math.round((completadasSemana / totalSemana) * 100) : 0;
       let etiqueta = "Sin empezar";
       if (completos === diasSemana.length) etiqueta = "Completada";
       else if (enProgreso) etiqueta = `En progreso · ${completos}/${diasSemana.length} días`;
       return `
         <div class="week-row">
           <div class="week-row-top"><span>Semana ${semana.numero}</span><span class="week-status">${etiqueta}</span></div>
-          <div class="day-dots">
-            ${diasSemana.map((d) => `<span class="day-dot ${d.estado}" title="Día ${d.diaNumero}"></span>`).join("")}
-          </div>
+          <div class="week-bar-track"><div class="week-bar-fill ${completos === diasSemana.length ? "completo" : "en_progreso"}" style="width:${pctSemana}%"></div></div>
         </div>`;
     }).join("");
 
     app.innerHTML = `
       ${topbar(asignacion.programas.nombre, sesion)}
       <main>
-        <p class="pill-label" style="margin-top:16px">Tu progreso</p>
+        <div style="display:flex;justify-content:center;margin-top:20px">${anilloProgreso(pctPrograma)}</div>
+        <p class="pill-label" style="margin-top:20px">Tu progreso por semana</p>
         ${filasSemana}
         <div style="margin-top:24px">
           <button class="primary" id="btn-continuar">
@@ -298,6 +319,7 @@ async function renderHome(sesion) {
 
   async function pintarSemana(semanaIdActual) {
     const dias = await restGet(sesion, `dias?semana_id=eq.${semanaIdActual}&select=id,numero&order=numero`);
+
     let diaId = ultimo.semana_id === semanaIdActual && dias.some((d) => d.id === ultimo.dia_id) ? ultimo.dia_id : dias[0].id;
 
     app.innerHTML = `
