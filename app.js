@@ -264,6 +264,14 @@ function semanaEsperadaActual(creadaEn, totalSemanas) {
   return Math.min(semanas, totalSemanas);
 }
 
+function formatearDesde(fechaIso) {
+  if (!fechaIso) return "sin actividad";
+  const dias = Math.floor((Date.now() - new Date(fechaIso).getTime()) / 86_400_000);
+  if (dias <= 0) return "hoy";
+  if (dias === 1) return "ayer";
+  return `hace ${dias} días`;
+}
+
 async function renderPanelEntrenador(sesion) {
   app.innerHTML = `${topbar("Panel de " + sesion.nombre, sesion)}<main><p class="lead">Cargando tus alumnos…</p></main>`;
 
@@ -271,13 +279,14 @@ async function renderPanelEntrenador(sesion) {
 
   const filas = [];
   for (const alumno of alumnos) {
+    const ultimaActividad = await rpc(sesion, "ultima_actividad", { p_usuario_id: alumno.id }).catch(() => null);
     const asignaciones = await restGet(
       sesion,
       `asignaciones?usuario_id=eq.${alumno.id}&activa=eq.true&select=programa_id,created_at,programas(nombre,estado)&order=created_at.desc&limit=1`
     );
     const asignacion = asignaciones.find((a) => a.programas && a.programas.estado === "publicado");
     if (!asignacion) {
-      filas.push({ alumno, programaNombre: null, pct: 0, dias: [] });
+      filas.push({ alumno, programaNombre: null, pct: 0, dias: [], ultimaActividad });
       continue;
     }
     const { semanas, dias } = await calcularDiasConEstado(sesion, alumno.id, asignacion.programa_id);
@@ -285,14 +294,17 @@ async function renderPanelEntrenador(sesion) {
     const atrasado = dias.some((d) => d.semanaNumero < semanaEsperada && d.estado !== "completo");
     filas.push({
       alumno, programaNombre: asignacion.programas.nombre, programaId: asignacion.programa_id,
-      pct: porcentaje(dias), dias, semanaEsperada, atrasado,
+      pct: porcentaje(dias), dias, semanaEsperada, atrasado, ultimaActividad,
     });
   }
 
   app.innerHTML = `
     ${topbar("Panel de " + sesion.nombre, sesion)}
     <main>
-      <div style="margin-top:16px"><button class="primary" id="btn-importar">Subir nuevo plan (Excel)</button></div>
+      <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="primary" id="btn-importar" style="flex:1">Subir nuevo plan (Excel)</button>
+        <button class="skip-btn" id="btn-historial">Ver planes anteriores</button>
+      </div>
       <p class="pill-label" style="margin-top:20px">Tus alumnos</p>
       ${filas.map((f, i) => `
         <div class="week-row" data-alumno="${i}" style="cursor:pointer">
@@ -304,11 +316,13 @@ async function renderPanelEntrenador(sesion) {
             </span>
           </div>
           ${f.programaNombre ? `<div class="week-bar-track"><div class="week-bar-fill ${f.pct === 100 ? "completo" : "en_progreso"}" style="width:${f.pct}%"></div></div>` : ""}
+          <p class="form-note" style="text-align:left;margin:6px 0 0">Última actividad: ${formatearDesde(f.ultimaActividad)}</p>
         </div>`).join("")}
     </main>`;
 
   document.getElementById("btn-salir").addEventListener("click", cerrarSesion);
   document.getElementById("btn-importar").addEventListener("click", () => renderImportarExcel(sesion));
+  document.getElementById("btn-historial").addEventListener("click", () => renderHistorialPlanes(sesion));
   document.querySelectorAll("[data-reset]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -356,6 +370,13 @@ function renderDetalleAlumno(sesion, f) {
     <main>
       <p class="form-note" style="text-align:left;margin:16px 0 0"><a href="#" id="link-volver" style="color:inherit">‹ Alumnos</a></p>
       <div style="display:flex;justify-content:center;margin-top:12px">${anilloProgreso(f.pct, f.programaNombre)}</div>
+
+      <p class="pill-label" style="margin-top:20px">Progresión de peso</p>
+      <select id="select-ejercicio-progresion" style="width:100%;border:1px solid var(--line);background:var(--surface);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px">
+        <option value="">Elige un ejercicio…</option>
+      </select>
+      <div id="grafico-progresion"></div>
+
       <p class="pill-label" style="margin-top:20px">Progreso por semana — toca un día para ver el detalle</p>
       ${filasSemana}
     </main>`;
@@ -364,9 +385,56 @@ function renderDetalleAlumno(sesion, f) {
     btn.addEventListener("click", () => renderDetalleDia(sesion, f, f.dias[parseInt(btn.dataset.diaIdx)]));
   });
   document.getElementById("link-volver").addEventListener("click", (e) => { e.preventDefault(); renderPanelEntrenador(sesion); });
+
+  // Rellena el desplegable con los ejercicios reales del programa asignado
+  restGet(sesion, `series_prescritas?dia_id=in.(${f.dias.map((d) => d.diaId).join(",")})&select=ejercicios_catalogo(id,nombre)`)
+    .then((filasPrescritas) => {
+      const vistos = new Map();
+      for (const fp of filasPrescritas) vistos.set(fp.ejercicios_catalogo.id, fp.ejercicios_catalogo.nombre);
+      const ejercicios = [...vistos.entries()].map(([id, nombre]) => ({ id, nombre })).sort((a, b) => a.nombre.localeCompare(b.nombre));
+      const select = document.getElementById("select-ejercicio-progresion");
+      select.innerHTML = `<option value="">Elige un ejercicio…</option>` +
+        ejercicios.map((ej) => `<option value="${ej.id}">${ej.nombre}</option>`).join("");
+      select.addEventListener("change", async () => {
+        const graf = document.getElementById("grafico-progresion");
+        if (!select.value) { graf.innerHTML = ""; return; }
+        graf.innerHTML = `<p class="lead">Cargando…</p>`;
+        const puntos = await rpc(sesion, "progresion_ejercicio", {
+          p_usuario_id: f.alumno.id, p_programa_id: f.programaId, p_ejercicio_id: select.value,
+        });
+        dibujarGraficoProgresion("grafico-progresion", puntos);
+      });
+    });
 }
 
-// ---------------------------------------------------------------
+function dibujarGraficoProgresion(contenedorId, puntos) {
+  const el = document.getElementById(contenedorId);
+  const conPeso = puntos.filter((p) => p.peso_max != null);
+  if (conPeso.length === 0) {
+    el.innerHTML = `<p class="lead">Todavía no hay series registradas de este ejercicio.</p>`;
+    return;
+  }
+  const w = 320, h = 140, pad = 22;
+  const pesos = conPeso.map((p) => p.peso_max);
+  const min = Math.min(...pesos), max = Math.max(...pesos);
+  const rango = max - min || 1;
+  const stepX = puntos.length > 1 ? (w - pad * 2) / (puntos.length - 1) : 0;
+  const coords = puntos.map((p, i) => ({
+    x: pad + i * stepX,
+    y: p.peso_max == null ? null : h - pad - ((p.peso_max - min) / rango) * (h - pad * 2),
+    p,
+  }));
+  const conValor = coords.filter((c) => c.y != null);
+  const linea = conValor.map((c, i) => `${i === 0 ? "M" : "L"} ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(" ");
+
+  el.innerHTML = `
+    <svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;margin-top:8px">
+      ${linea ? `<path d="${linea}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>` : ""}
+      ${conValor.map((c) => `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="3.5" fill="var(--accent)" />`).join("")}
+      ${coords.map((c) => `<text x="${c.x.toFixed(1)}" y="${h - 4}" font-size="9" fill="var(--steel)" text-anchor="middle">S${c.p.semana_numero}</text>`).join("")}
+    </svg>
+    <p class="form-note" style="text-align:center">${min}–${max} kg de rango en el periodo</p>`;
+}
 // Detalle de un día concreto de un alumno, en solo lectura
 // ---------------------------------------------------------------
 function renderEjercicioSoloLectura(prescrita, registradas) {
@@ -389,12 +457,13 @@ function renderEjercicioSoloLectura(prescrita, registradas) {
   const comentarios = registradas
     .filter((r) => r.serie_prescrita_id === prescrita.id && r.comentario)
     .map((r) => r.comentario);
+  const rirReal = registradas.find((r) => r.serie_prescrita_id === prescrita.id && r.rir_real != null)?.rir_real;
 
   return `
     <div class="exercise">
       <div class="exercise-head">
         <h2>${prescrita.ejercicios_catalogo.nombre}</h2>
-        <div class="meta">${prescrita.series} series · ${prescrita.reps_objetivo} ${unidad === "s" ? "" : "reps"} · RIR ${prescrita.rir ?? "–"}</div>
+        <div class="meta">${prescrita.series} series · ${prescrita.reps_objetivo} ${unidad === "s" ? "" : "reps"} · RIR objetivo ${prescrita.rir ?? "–"}${rirReal != null ? ` · RIR real ${rirReal}` : ""}</div>
       </div>
       ${filas}
       ${comentarios.length ? `<p class="form-note" style="text-align:left;margin-top:10px">Nota: ${comentarios.join(" · ")}</p>` : ""}
@@ -410,7 +479,7 @@ async function renderDetalleDia(sesion, f, dia) {
   );
   const ids = prescritas.map((p) => p.id);
   const registradas = ids.length
-    ? await restGet(sesion, `series_registradas?serie_prescrita_id=in.(${ids.join(",")})&usuario_id=eq.${f.alumno.id}&select=serie_prescrita_id,numero_serie,peso_real,valor_real,completada,comentario`)
+    ? await restGet(sesion, `series_registradas?serie_prescrita_id=in.(${ids.join(",")})&usuario_id=eq.${f.alumno.id}&select=serie_prescrita_id,numero_serie,peso_real,valor_real,completada,comentario,rir_real`)
     : [];
 
   app.innerHTML = `
@@ -699,6 +768,34 @@ async function renderImportarExcel(sesion) {
   });
 }
 
+async function renderHistorialPlanes(sesion) {
+  app.innerHTML = `${topbar("Planes anteriores", sesion)}<main><p class="lead">Cargando…</p></main>`;
+  const programas = await restGet(
+    sesion,
+    `programas?entrenador_id=eq.${sesion.entrenador_id}&estado=eq.publicado&select=id,nombre,created_at&order=created_at.desc`
+  );
+  app.innerHTML = `
+    ${topbar("Planes anteriores", sesion)}
+    <main>
+      <p class="form-note" style="text-align:left;margin:16px 0 0"><a href="#" id="link-volver-historial" style="color:inherit">‹ Panel</a></p>
+      <p class="pill-label" style="margin-top:16px">Planes ya subidos</p>
+      ${programas.map((p) => `
+        <div class="week-row">
+          <div class="week-row-top">
+            <span>${p.nombre}</span>
+            <button class="skip-btn" data-asignar="${p.id}" data-nombre="${p.nombre.replace(/"/g, "&quot;")}">Asignar</button>
+          </div>
+          <p class="form-note" style="text-align:left;margin:4px 0 0">Subido el ${new Date(p.created_at).toLocaleDateString("es-ES")}</p>
+        </div>`).join("") || `<p class="lead">Todavía no has publicado ningún plan.</p>`}
+    </main>`;
+  document.getElementById("btn-salir").addEventListener("click", cerrarSesion);
+  document.getElementById("link-volver-historial").addEventListener("click", (e) => { e.preventDefault(); renderPanelEntrenador(sesion); });
+  document.querySelectorAll("[data-asignar]").forEach((btn) => {
+    btn.addEventListener("click", () => renderAsignarPrograma(sesion, btn.dataset.asignar, btn.dataset.nombre));
+  });
+}
+
+
 async function renderAsignarPrograma(sesion, programaId, nombrePrograma) {
   const alumnos = await restGet(sesion, `usuarios?entrenador_id=eq.${sesion.entrenador_id}&rol=eq.alumno&select=id,nombre&order=nombre`);
   app.innerHTML = `
@@ -977,7 +1074,7 @@ async function renderHome(sesion) {
     const registradas = idsPrescritas.length
       ? await restGet(
           sesion,
-          `series_registradas?serie_prescrita_id=in.(${idsPrescritas.join(",")})&usuario_id=eq.${sesion.usuario_id}&select=serie_prescrita_id,numero_serie,peso_real,valor_real,completada`
+          `series_registradas?serie_prescrita_id=in.(${idsPrescritas.join(",")})&usuario_id=eq.${sesion.usuario_id}&select=serie_prescrita_id,numero_serie,peso_real,valor_real,completada,comentario,rir_real`
         )
       : [];
 
@@ -1026,6 +1123,8 @@ function renderEjercicio(prescrita, registradas, ultimo) {
       </div>`;
   }).join("");
 
+  const previaUno = registradas.find((r) => r.serie_prescrita_id === prescrita.id && r.numero_serie === 1);
+
   return `
     <div class="exercise" data-prescrita="${prescrita.id}">
       <div class="exercise-head">
@@ -1034,7 +1133,8 @@ function renderEjercicio(prescrita, registradas, ultimo) {
       </div>
       ${filas}
       <div class="exercise-footer">
-        <input class="note-input" type="text" placeholder="Nota (opcional)" />
+        <input class="note-input" type="text" placeholder="Nota (opcional)" value="${previaUno && previaUno.comentario ? previaUno.comentario.replace(/"/g, "&quot;") : ""}" />
+        <input class="rir-input num" type="text" inputmode="numeric" placeholder="RIR real" title="¿Con cuántas repeticiones en recámara terminaste?" value="${previaUno && previaUno.rir_real != null ? previaUno.rir_real : ""}" />
         <button class="skip-btn">No me dio tiempo</button>
       </div>
     </div>`;
@@ -1044,6 +1144,7 @@ function conectarEjercicio(sesion, prescrita) {
   const el = document.querySelector(`.exercise[data-prescrita="${prescrita.id}"]`);
   if (!el) return;
   const notaInput = el.querySelector(".note-input");
+  const rirInput = el.querySelector(".rir-input");
 
   function pesoRedondeado(v) { return Math.round(v * 2) / 2; } // pasos de 0.5 kg
   const paso = { peso: 2.5, valor: 1 };
@@ -1061,6 +1162,7 @@ function conectarEjercicio(sesion, prescrita) {
       valor_real: valor,
       completada,
       comentario: numero === 1 ? notaInput.value.trim() || null : null,
+      rir_real: numero === 1 && rirInput.value.trim() !== "" ? parseFloat(rirInput.value.replace(",", ".")) : null,
     });
   }
 
