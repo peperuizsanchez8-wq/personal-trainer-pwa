@@ -207,6 +207,16 @@ p.lead { color: var(--steel); margin: 0 0 24px; font-size: 15px; }
 .week-bar-fill.danger { background: var(--danger); }
 .week-status.danger { color: var(--danger); }
 
+.volumen-detalle summary::-webkit-details-marker { display: none; }
+.volumen-detalle summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--steel);
+  transition: transform 0.15s ease;
+}
+.volumen-detalle[open] summary::before { transform: rotate(90deg); }
+
 .progress-ring {
   position: relative;
   width: 140px;
