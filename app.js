@@ -454,6 +454,19 @@ function conectarEjercicio(sesion, prescrita) {
       valorEl.dataset.valor = actual;
       const unidad = valorEl.textContent.trim().split(" ").slice(-1)[0];
       valorEl.textContent = `${actual} ${unidad}`;
+
+      // El peso suele ser el mismo en todas las series de un ejercicio:
+      // lo copiamos a las series siguientes que aún no se hayan marcado como hechas.
+      if (campo === "peso") {
+        el.querySelectorAll(".set-row").forEach((otraFila) => {
+          const otroCheck = otraFila.querySelector(".check-btn");
+          if (otroCheck.dataset.done === "1") return;
+          const otroStepper = otraFila.querySelector('[data-campo="peso"] .value');
+          if (otroStepper === valorEl) return;
+          otroStepper.dataset.valor = actual;
+          otroStepper.textContent = `${actual} kg`;
+        });
+      }
     });
   });
 
