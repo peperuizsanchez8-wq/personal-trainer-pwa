@@ -204,6 +204,8 @@ p.lead { color: var(--steel); margin: 0 0 24px; font-size: 15px; }
   transition: width 0.3s ease;
 }
 .week-bar-fill.completo { background: var(--good); }
+.week-bar-fill.danger { background: var(--danger); }
+.week-status.danger { color: var(--danger); }
 
 .progress-ring {
   position: relative;
