@@ -940,11 +940,13 @@ async function renderHome(sesion) {
     }
     const filas = Object.entries(porGrupo).sort((a, b) => b[1] - a[1]);
     el.innerHTML = `
-      <p class="pill-label" style="margin-top:18px">Volumen de la semana</p>
-      ${filas.map(([g, n]) => `
-        <div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid var(--line);font-size:14px">
-          <span>${g}</span><span class="num" style="color:var(--steel)">${n} series</span>
-        </div>`).join("")}`;
+      <details class="volumen-detalle" style="margin-top:18px">
+        <summary class="pill-label" style="margin:0;cursor:pointer;display:list-item">Volumen de la semana</summary>
+        ${filas.map(([g, n]) => `
+          <div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid var(--line);font-size:14px">
+            <span>${g}</span><span class="num" style="color:var(--steel)">${n} series</span>
+          </div>`).join("")}
+      </details>`;
   }
 
   async function pintarDia(diaId) {
