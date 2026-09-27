@@ -502,7 +502,12 @@ function render() {
 }
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js"));
+  window.addEventListener("load", async () => {
+    const reg = await navigator.serviceWorker.register("./sw.js");
+    // Fuerza a comprobar si hay una versión nueva del propio service worker
+    // cada vez que se abre la app, en vez de fiarse del ciclo por defecto del navegador.
+    reg.update();
+  });
 }
 
 render();
