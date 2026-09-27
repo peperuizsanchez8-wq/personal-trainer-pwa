@@ -45,6 +45,10 @@ button, input {
   color: inherit;
 }
 
+button {
+  touch-action: manipulation;
+}
+
 svg.icon {
   width: 1em;
   height: 1em;
@@ -163,6 +167,44 @@ p.lead { color: var(--steel); margin: 0 0 24px; font-size: 15px; }
   color: var(--steel);
   margin: 18px 0 0;
 }
+
+/* ---------- Resumen de progreso ---------- */
+
+.week-row {
+  border-top: 1px solid var(--line);
+  padding: 14px 0;
+}
+.week-row:first-of-type { border-top: none; }
+
+.week-row-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.week-status {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--steel);
+}
+
+.day-dots {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.day-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  background: transparent;
+}
+.day-dot.completo { background: var(--good); border-color: var(--good); }
+.day-dot.en_progreso { background: var(--accent); border-color: var(--accent); }
 
 /* ---------- Exercise sections ---------- */
 
