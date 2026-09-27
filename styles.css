@@ -302,6 +302,17 @@ p.lead { color: var(--steel); margin: 0 0 24px; font-size: 15px; }
   font-size: 15px;
   text-align: center;
   flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  padding: 0;
+  outline: none;
+}
+.stepper .value:focus { text-decoration: underline; text-decoration-color: var(--accent); }
+.stepper .unidad {
+  font-size: 11px;
+  color: var(--steel);
+  white-space: nowrap;
 }
 
 .check-btn {
