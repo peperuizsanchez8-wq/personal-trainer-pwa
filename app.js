@@ -137,6 +137,7 @@ function renderLogin(error) {
         <button type="submit" class="primary" id="btn-entrar">Entrar</button>
       </form>
       <p class="form-note">Si es tu primera vez, pídele el enlace y tu PIN a tu entrenador.</p>
+      <p class="form-note">[diagnóstico temporal] Grupo detectado: ${entrenadorIdGuardado() || "NINGUNO — falta el código en la URL"}</p>
     </div>`;
 
   document.getElementById("form-login").addEventListener("submit", async (e) => {
@@ -196,8 +197,15 @@ function renderSinPrograma(sesion) {
 }
 
 // ---------------------------------------------------------------
-// Pantalla principal: selector de semana / día + ejercicios
+// Pantalla principal: resumen + selector de semana / día + ejercicios
 // ---------------------------------------------------------------
+function estadoDia(fila) {
+  if (!fila || fila.total_series == 0) return "pendiente";
+  if (fila.series_completadas >= fila.total_series) return "completo";
+  if (fila.series_registradas > 0) return "en_progreso";
+  return "pendiente";
+}
+
 async function renderHome(sesion) {
   app.innerHTML = `${topbar(sesion.nombre, sesion)}<main><p class="lead">Cargando tu programa…</p></main>`;
 
@@ -218,12 +226,75 @@ async function renderHome(sesion) {
 
   const programaId = asignacion.programa_id;
   const semanas = await restGet(sesion, `semanas?programa_id=eq.${programaId}&select=id,numero&order=numero`);
+  const diasPlanos = await restGet(
+    sesion,
+    `dias?semana_id=in.(${semanas.map((s) => s.id).join(",")})&select=id,numero,semana_id&order=numero`
+  );
+  const progreso = await rpc(sesion, "progreso_programa", { p_usuario_id: sesion.usuario_id, p_programa_id: programaId });
 
   const claveUltimo = `ultimo_${sesion.usuario_id}_${programaId}`;
   let ultimo = {};
   try { ultimo = JSON.parse(localStorage.getItem(claveUltimo) || "{}"); } catch { /* noop */ }
 
-  let semanaId = ultimo.semana_id && semanas.some((s) => s.id === ultimo.semana_id) ? ultimo.semana_id : semanas[0].id;
+  // Construye la lista ordenada de días con su id real y su estado de progreso
+  const diasConEstado = [];
+  for (const semana of semanas) {
+    const diasDeEstaSemana = diasPlanos.filter((d) => d.semana_id === semana.id);
+    for (const dia of diasDeEstaSemana) {
+      const fila = progreso.find((p) => p.semana_numero === semana.numero && p.dia_numero === dia.numero);
+      diasConEstado.push({
+        semanaId: semana.id, semanaNumero: semana.numero,
+        diaId: dia.id, diaNumero: dia.numero,
+        estado: estadoDia(fila),
+      });
+    }
+  }
+
+  function pintarResumen() {
+    const siguiente = diasConEstado.find((d) => d.estado !== "completo") || diasConEstado[diasConEstado.length - 1];
+    const todoCompleto = diasConEstado.every((d) => d.estado === "completo");
+
+    const filasSemana = semanas.map((semana) => {
+      const diasSemana = diasConEstado.filter((d) => d.semanaId === semana.id);
+      const completos = diasSemana.filter((d) => d.estado === "completo").length;
+      const enProgreso = diasSemana.some((d) => d.estado !== "pendiente");
+      let etiqueta = "Sin empezar";
+      if (completos === diasSemana.length) etiqueta = "Completada";
+      else if (enProgreso) etiqueta = `En progreso · ${completos}/${diasSemana.length} días`;
+      return `
+        <div class="week-row">
+          <div class="week-row-top"><span>Semana ${semana.numero}</span><span class="week-status">${etiqueta}</span></div>
+          <div class="day-dots">
+            ${diasSemana.map((d) => `<span class="day-dot ${d.estado}" title="Día ${d.diaNumero}"></span>`).join("")}
+          </div>
+        </div>`;
+    }).join("");
+
+    app.innerHTML = `
+      ${topbar(asignacion.programas.nombre, sesion)}
+      <main>
+        <p class="pill-label" style="margin-top:16px">Tu progreso</p>
+        ${filasSemana}
+        <div style="margin-top:24px">
+          <button class="primary" id="btn-continuar">
+            ${todoCompleto ? "Repasar" : "Continuar"}: Semana ${siguiente.semanaNumero} · Día ${siguiente.diaNumero}
+          </button>
+        </div>
+        <p class="form-note"><a href="#" id="link-elegir" style="color:inherit">Elegir otra semana o día</a></p>
+      </main>`;
+
+    document.getElementById("btn-salir").addEventListener("click", cerrarSesion);
+    document.getElementById("btn-continuar").addEventListener("click", () => {
+      ultimo = { semana_id: siguiente.semanaId, dia_id: siguiente.diaId };
+      localStorage.setItem(claveUltimo, JSON.stringify(ultimo));
+      pintarSemana(siguiente.semanaId);
+    });
+    document.getElementById("link-elegir").addEventListener("click", (e) => {
+      e.preventDefault();
+      const semanaInicial = ultimo.semana_id && semanas.some((s) => s.id === ultimo.semana_id) ? ultimo.semana_id : semanas[0].id;
+      pintarSemana(semanaInicial);
+    });
+  }
 
   async function pintarSemana(semanaIdActual) {
     const dias = await restGet(sesion, `dias?semana_id=eq.${semanaIdActual}&select=id,numero&order=numero`);
@@ -232,6 +303,7 @@ async function renderHome(sesion) {
     app.innerHTML = `
       ${topbar(asignacion.programas.nombre, sesion)}
       <main>
+        <p class="form-note" style="text-align:left;margin:16px 0 0"><a href="#" id="link-resumen" style="color:inherit">‹ Resumen</a></p>
         <div class="pill-label">Semana</div>
         <div class="pill-row" id="pills-semana">
           ${semanas.map((s) => `<button class="pill${s.id === semanaIdActual ? " active" : ""}" data-id="${s.id}">Semana ${s.numero}</button>`).join("")}
@@ -245,7 +317,8 @@ async function renderHome(sesion) {
       <div class="bottombar"><div class="inner"><button class="primary" id="btn-terminar">Terminar sesión</button></div></div>`;
 
     document.getElementById("btn-salir").addEventListener("click", cerrarSesion);
-    document.getElementById("btn-terminar").addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+    document.getElementById("btn-terminar").addEventListener("click", () => pintarResumen());
+    document.getElementById("link-resumen").addEventListener("click", (e) => { e.preventDefault(); pintarResumen(); });
 
     document.querySelectorAll("#pills-semana .pill").forEach((btn) =>
       btn.addEventListener("click", () => {
@@ -294,7 +367,7 @@ async function renderHome(sesion) {
     prescritas.forEach((p) => conectarEjercicio(sesion, p));
   }
 
-  pintarSemana(semanaId);
+  pintarResumen();
 }
 
 function renderEjercicio(prescrita, registradas, ultimo) {
