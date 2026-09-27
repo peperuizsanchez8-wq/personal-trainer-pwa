@@ -842,7 +842,7 @@ async function renderHome(sesion) {
       if (completos === diasSemana.length) etiqueta = "Completada";
       else if (enProgreso) etiqueta = `En progreso · ${completos}/${diasSemana.length} días`;
       return `
-        <div class="week-row">
+        <div class="week-row" data-semana-id="${semana.id}" style="cursor:pointer">
           <div class="week-row-top"><span>Semana ${semana.numero}</span><span class="week-status">${etiqueta}</span></div>
           <div class="week-bar-track"><div class="week-bar-fill ${completos === diasSemana.length ? "completo" : "en_progreso"}" style="width:${pctSemana}%"></div></div>
         </div>`;
@@ -852,7 +852,7 @@ async function renderHome(sesion) {
       ${topbar(asignacion.programas.nombre, sesion)}
       <main>
         <div style="display:flex;justify-content:center;margin-top:20px">${anilloProgreso(pctPrograma)}</div>
-        <p class="pill-label" style="margin-top:20px">Tu progreso por semana</p>
+        <p class="pill-label" style="margin-top:20px">Tu progreso por semana — toca una semana para entrar</p>
         ${filasSemana}
         <div style="margin-top:24px">
           <button class="primary" id="btn-continuar">
@@ -863,6 +863,16 @@ async function renderHome(sesion) {
       </main>`;
 
     document.getElementById("btn-salir").addEventListener("click", cerrarSesion);
+    document.querySelectorAll("[data-semana-id]").forEach((row) => {
+      row.addEventListener("click", () => {
+        const semanaId = row.dataset.semanaId;
+        const enEsaSemana = diasConEstado.filter((d) => d.semanaId === semanaId);
+        const objetivo = enEsaSemana.find((d) => d.estado !== "completo") || enEsaSemana[0];
+        ultimo = { semana_id: semanaId, dia_id: objetivo.diaId };
+        localStorage.setItem(claveUltimo, JSON.stringify(ultimo));
+        pintarSemana(semanaId);
+      });
+    });
     document.getElementById("btn-continuar").addEventListener("click", () => {
       ultimo = { semana_id: siguiente.semanaId, dia_id: siguiente.diaId };
       localStorage.setItem(claveUltimo, JSON.stringify(ultimo));
