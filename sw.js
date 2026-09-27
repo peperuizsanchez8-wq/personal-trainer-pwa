@@ -1,7 +1,7 @@
 // Sube este número en CADA despliegue (aunque solo cambies una coma).
 // Es lo único que fuerza a los móviles que ya tienen la app instalada
 // a descargar la versión nueva en vez de quedarse con la de caché.
-const CACHE_VERSION = "v4";
+const CACHE_VERSION = "v5";
 const CACHE_NAME = `entreno-shell-${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -46,7 +46,7 @@ self.addEventListener("fetch", (event) => {
   // Para el propio código de la app: red primero, caché solo como respaldo offline.
   // Así una actualización llega en cuanto hay conexión, en vez de quedarse pegada.
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: "no-store" })
       .then((response) => {
         const copy = response.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
