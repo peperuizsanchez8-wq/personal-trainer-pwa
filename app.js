@@ -167,6 +167,116 @@ function renderLogin(error) {
 }
 
 // ---------------------------------------------------------------
+// Panel del entrenador: lista de alumnos + progreso de cada uno
+// ---------------------------------------------------------------
+async function calcularDiasConEstado(sesion, usuarioId, programaId) {
+  const semanas = await restGet(sesion, `semanas?programa_id=eq.${programaId}&select=id,numero&order=numero`);
+  if (semanas.length === 0) return { semanas: [], dias: [] };
+  const diasPlanos = await restGet(
+    sesion,
+    `dias?semana_id=in.(${semanas.map((s) => s.id).join(",")})&select=id,numero,semana_id&order=numero`
+  );
+  const progreso = await rpc(sesion, "progreso_programa", { p_usuario_id: usuarioId, p_programa_id: programaId });
+
+  const dias = [];
+  for (const semana of semanas) {
+    for (const dia of diasPlanos.filter((d) => d.semana_id === semana.id)) {
+      const fila = progreso.find((p) => p.semana_numero === semana.numero && p.dia_numero === dia.numero);
+      dias.push({
+        semanaId: semana.id, semanaNumero: semana.numero,
+        diaId: dia.id, diaNumero: dia.numero,
+        estado: estadoDia(fila),
+        total: fila ? Number(fila.total_series) : 0,
+        completadas: fila ? Number(fila.series_completadas) : 0,
+      });
+    }
+  }
+  return { semanas, dias };
+}
+
+function porcentaje(dias) {
+  const total = dias.reduce((acc, d) => acc + d.total, 0);
+  const completadas = dias.reduce((acc, d) => acc + d.completadas, 0);
+  return total > 0 ? Math.round((completadas / total) * 100) : 0;
+}
+
+async function renderPanelEntrenador(sesion) {
+  app.innerHTML = `${topbar("Panel de " + sesion.nombre, sesion)}<main><p class="lead">Cargando tus alumnos…</p></main>`;
+
+  const alumnos = await restGet(sesion, `usuarios?entrenador_id=eq.${sesion.entrenador_id}&rol=eq.alumno&select=id,nombre&order=nombre`);
+
+  const filas = [];
+  for (const alumno of alumnos) {
+    const asignaciones = await restGet(
+      sesion,
+      `asignaciones?usuario_id=eq.${alumno.id}&activa=eq.true&select=programa_id,programas(nombre,estado)&order=created_at.desc&limit=1`
+    );
+    const asignacion = asignaciones.find((a) => a.programas && a.programas.estado === "publicado");
+    if (!asignacion) {
+      filas.push({ alumno, programaNombre: null, pct: 0, dias: [] });
+      continue;
+    }
+    const { dias } = await calcularDiasConEstado(sesion, alumno.id, asignacion.programa_id);
+    filas.push({ alumno, programaNombre: asignacion.programas.nombre, programaId: asignacion.programa_id, pct: porcentaje(dias), dias });
+  }
+
+  app.innerHTML = `
+    ${topbar("Panel de " + sesion.nombre, sesion)}
+    <main>
+      <p class="pill-label" style="margin-top:16px">Tus alumnos</p>
+      ${filas.map((f, i) => `
+        <div class="week-row" data-alumno="${i}" style="cursor:pointer">
+          <div class="week-row-top">
+            <span>${f.alumno.nombre}</span>
+            <span class="week-status">${f.programaNombre ? f.pct + "%" : "Sin programa"}</span>
+          </div>
+          ${f.programaNombre ? `<div class="week-bar-track"><div class="week-bar-fill ${f.pct === 100 ? "completo" : "en_progreso"}" style="width:${f.pct}%"></div></div>` : ""}
+        </div>`).join("")}
+    </main>`;
+
+  document.getElementById("btn-salir").addEventListener("click", cerrarSesion);
+  document.querySelectorAll("[data-alumno]").forEach((row) => {
+    row.addEventListener("click", () => {
+      const f = filas[parseInt(row.dataset.alumno)];
+      if (f.programaNombre) renderDetalleAlumno(sesion, f);
+    });
+  });
+}
+
+function renderDetalleAlumno(sesion, f) {
+  const filasSemana = f.dias.reduce((acc, d) => {
+    let semana = acc.find((s) => s.numero === d.semanaNumero);
+    if (!semana) { semana = { numero: d.semanaNumero, dias: [] }; acc.push(semana); }
+    semana.dias.push(d);
+    return acc;
+  }, []).map((semana) => {
+    const completos = semana.dias.filter((d) => d.estado === "completo").length;
+    const total = semana.dias.reduce((a, d) => a + d.total, 0);
+    const completadas = semana.dias.reduce((a, d) => a + d.completadas, 0);
+    const pct = total > 0 ? Math.round((completadas / total) * 100) : 0;
+    let etiqueta = "Sin empezar";
+    if (completos === semana.dias.length) etiqueta = "Completada";
+    else if (semana.dias.some((d) => d.estado !== "pendiente")) etiqueta = `En progreso · ${completos}/${semana.dias.length} días`;
+    return `
+      <div class="week-row">
+        <div class="week-row-top"><span>Semana ${semana.numero}</span><span class="week-status">${etiqueta}</span></div>
+        <div class="week-bar-track"><div class="week-bar-fill ${completos === semana.dias.length ? "completo" : "en_progreso"}" style="width:${pct}%"></div></div>
+      </div>`;
+  }).join("");
+
+  app.innerHTML = `
+    ${topbar(f.alumno.nombre, sesion)}
+    <main>
+      <p class="form-note" style="text-align:left;margin:16px 0 0"><a href="#" id="link-volver" style="color:inherit">‹ Alumnos</a></p>
+      <div style="display:flex;justify-content:center;margin-top:12px">${anilloProgreso(f.pct, f.programaNombre)}</div>
+      <p class="pill-label" style="margin-top:20px">Progreso por semana</p>
+      ${filasSemana}
+    </main>`;
+  document.getElementById("btn-salir").addEventListener("click", cerrarSesion);
+  document.getElementById("link-volver").addEventListener("click", (e) => { e.preventDefault(); renderPanelEntrenador(sesion); });
+}
+
+// ---------------------------------------------------------------
 // Pantalla: solo alumnos por ahora
 // ---------------------------------------------------------------
 function renderNoDisponibleParaRol(sesion) {
@@ -204,6 +314,19 @@ function estadoDia(fila) {
   if (fila.series_completadas >= fila.total_series) return "completo";
   if (fila.series_registradas > 0) return "en_progreso";
   return "pendiente";
+}
+
+function anilloProgreso(pct, etiqueta) {
+  const r = 34, c = 2 * Math.PI * r;
+  const offset = c * (1 - pct / 100);
+  return `
+    <div class="progress-ring">
+      <svg viewBox="0 0 80 80">
+        <circle class="track" cx="40" cy="40" r="${r}" />
+        <circle class="fill" cx="40" cy="40" r="${r}" stroke-dasharray="${c}" stroke-dashoffset="${offset}" />
+      </svg>
+      <div class="progress-ring-label"><span class="num">${pct}%</span><span>${etiqueta || "del programa"}</span></div>
+    </div>`;
 }
 
 async function renderHome(sesion) {
@@ -250,19 +373,6 @@ async function renderHome(sesion) {
         completadas: fila ? Number(fila.series_completadas) : 0,
       });
     }
-  }
-
-  function anilloProgreso(pct) {
-    const r = 34, c = 2 * Math.PI * r;
-    const offset = c * (1 - pct / 100);
-    return `
-      <div class="progress-ring">
-        <svg viewBox="0 0 80 80">
-          <circle class="track" cx="40" cy="40" r="${r}" />
-          <circle class="fill" cx="40" cy="40" r="${r}" stroke-dasharray="${c}" stroke-dashoffset="${offset}" />
-        </svg>
-        <div class="progress-ring-label"><span class="num">${pct}%</span><span>del programa</span></div>
-      </div>`;
   }
 
   function pintarResumen() {
@@ -548,6 +658,7 @@ function conectarEjercicio(sesion, prescrita) {
 function render() {
   const sesion = leerSesion();
   if (!sesion) return renderLogin(null);
+  if (sesion.rol === "entrenador") return renderPanelEntrenador(sesion);
   if (sesion.rol !== "alumno") return renderNoDisponibleParaRol(sesion);
   renderHome(sesion);
 }
