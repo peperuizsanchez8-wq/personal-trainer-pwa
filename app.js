@@ -282,7 +282,7 @@ async function renderPanelEntrenador(sesion) {
     const ultimaActividad = await rpc(sesion, "ultima_actividad", { p_usuario_id: alumno.id }).catch(() => null);
     const asignaciones = await restGet(
       sesion,
-      `asignaciones?usuario_id=eq.${alumno.id}&activa=eq.true&select=programa_id,created_at,programas(nombre,estado)&order=created_at.desc&limit=1`
+      `asignaciones?usuario_id=eq.${alumno.id}&activa=eq.true&select=id,programa_id,created_at,nota_entrenador,programas(nombre,estado)&order=created_at.desc&limit=1`
     );
     const asignacion = asignaciones.find((a) => a.programas && a.programas.estado === "publicado");
     if (!asignacion) {
@@ -294,6 +294,7 @@ async function renderPanelEntrenador(sesion) {
     const atrasado = dias.some((d) => d.semanaNumero < semanaEsperada && d.estado !== "completo");
     filas.push({
       alumno, programaNombre: asignacion.programas.nombre, programaId: asignacion.programa_id,
+      asignacionId: asignacion.id, notaEntrenador: asignacion.nota_entrenador,
       pct: porcentaje(dias), dias, semanaEsperada, atrasado, ultimaActividad,
     });
   }
@@ -371,6 +372,10 @@ function renderDetalleAlumno(sesion, f) {
       <p class="form-note" style="text-align:left;margin:16px 0 0"><a href="#" id="link-volver" style="color:inherit">‹ Alumnos</a></p>
       <div style="display:flex;justify-content:center;margin-top:12px">${anilloProgreso(f.pct, f.programaNombre)}</div>
 
+      <p class="pill-label" style="margin-top:20px">Nota para ${f.alumno.nombre}</p>
+      <textarea id="nota-entrenador" placeholder="Ej. baja el peso en sentadilla, muy buen progreso en press banca…" style="width:100%;min-height:70px;border:1px solid var(--line);background:var(--surface);border-radius:var(--radius);padding:10px 12px;font-family:inherit;font-size:14px">${f.notaEntrenador || ""}</textarea>
+      <button class="skip-btn" id="btn-guardar-nota" style="margin-top:6px">Guardar nota</button>
+
       <p class="pill-label" style="margin-top:20px">Progresión de peso</p>
       <select id="select-ejercicio-progresion" style="width:100%;border:1px solid var(--line);background:var(--surface);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px">
         <option value="">Elige un ejercicio…</option>
@@ -385,6 +390,24 @@ function renderDetalleAlumno(sesion, f) {
     btn.addEventListener("click", () => renderDetalleDia(sesion, f, f.dias[parseInt(btn.dataset.diaIdx)]));
   });
   document.getElementById("link-volver").addEventListener("click", (e) => { e.preventDefault(); renderPanelEntrenador(sesion); });
+  document.getElementById("btn-guardar-nota").addEventListener("click", async (e) => {
+    const btn = e.target;
+    const texto = document.getElementById("nota-entrenador").value.trim();
+    btn.disabled = true;
+    btn.textContent = "Guardando…";
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/asignaciones?id=eq.${f.asignacionId}`, {
+        method: "PATCH",
+        headers: { ...headersRest(sesion), Prefer: "return=minimal" },
+        body: JSON.stringify({ nota_entrenador: texto || null }),
+      });
+      btn.textContent = "Guardado";
+      setTimeout(() => { btn.textContent = "Guardar nota"; btn.disabled = false; }, 1500);
+    } catch {
+      btn.textContent = "No se pudo guardar, reintentar";
+      btn.disabled = false;
+    }
+  });
 
   // Rellena el desplegable con los ejercicios reales del programa asignado
   restGet(sesion, `series_prescritas?dia_id=in.(${f.dias.map((d) => d.diaId).join(",")})&select=ejercicios_catalogo(id,nombre)`)
@@ -783,7 +806,10 @@ async function renderHistorialPlanes(sesion) {
         <div class="week-row">
           <div class="week-row-top">
             <span>${p.nombre}</span>
-            <button class="skip-btn" data-asignar="${p.id}" data-nombre="${p.nombre.replace(/"/g, "&quot;")}">Asignar</button>
+            <span style="display:flex;gap:8px">
+              <button class="skip-btn" data-editar="${p.id}" data-nombre="${p.nombre.replace(/"/g, "&quot;")}">Editar</button>
+              <button class="skip-btn" data-asignar="${p.id}" data-nombre="${p.nombre.replace(/"/g, "&quot;")}">Asignar</button>
+            </span>
           </div>
           <p class="form-note" style="text-align:left;margin:4px 0 0">Subido el ${new Date(p.created_at).toLocaleDateString("es-ES")}</p>
         </div>`).join("") || `<p class="lead">Todavía no has publicado ningún plan.</p>`}
@@ -793,6 +819,85 @@ async function renderHistorialPlanes(sesion) {
   document.querySelectorAll("[data-asignar]").forEach((btn) => {
     btn.addEventListener("click", () => renderAsignarPrograma(sesion, btn.dataset.asignar, btn.dataset.nombre));
   });
+  document.querySelectorAll("[data-editar]").forEach((btn) => {
+    btn.addEventListener("click", () => renderEditarPrograma(sesion, btn.dataset.editar, btn.dataset.nombre));
+  });
+}
+
+async function renderEditarPrograma(sesion, programaId, nombrePrograma) {
+  const semanas = await restGet(sesion, `semanas?programa_id=eq.${programaId}&select=id,numero&order=numero`);
+
+  async function pintarSemanaEdicion(semanaId) {
+    const dias = await restGet(sesion, `dias?semana_id=eq.${semanaId}&select=id,numero&order=numero`);
+    pintarDiaEdicion(dias[0].id, semanaId, dias);
+  }
+
+  async function pintarDiaEdicion(diaId, semanaId, diasDeLaSemana) {
+    const prescritas = await restGet(
+      sesion,
+      `series_prescritas?dia_id=eq.${diaId}&select=id,orden,series,reps_objetivo,rir,descanso,ejercicios_catalogo(nombre)&order=orden`
+    );
+
+    app.innerHTML = `
+      ${topbar("Editando: " + nombrePrograma, sesion)}
+      <main>
+        <p class="form-note" style="text-align:left;margin:16px 0 0"><a href="#" id="link-volver-editar" style="color:inherit">‹ Planes anteriores</a></p>
+        <div class="pill-label">Semana</div>
+        <div class="pill-row" id="pills-semana-edicion">
+          ${semanas.map((s) => `<button class="pill${s.id === semanaId ? " active" : ""}" data-id="${s.id}">Semana ${s.numero}</button>`).join("")}
+        </div>
+        <div class="pill-label">Día</div>
+        <div class="pill-row" id="pills-dia-edicion">
+          ${diasDeLaSemana.map((d) => `<button class="pill${d.id === diaId ? " active" : ""}" data-id="${d.id}">Día ${d.numero}</button>`).join("")}
+        </div>
+        ${prescritas.map((p) => `
+          <div class="exercise" data-sp="${p.id}">
+            <div class="exercise-head"><h2>${p.ejercicios_catalogo.nombre}</h2></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+              <div class="field"><label>Series</label><input type="text" inputmode="numeric" class="e-series" value="${p.series}" /></div>
+              <div class="field"><label>Reps objetivo</label><input type="text" class="e-reps" value="${p.reps_objetivo || ""}" /></div>
+              <div class="field"><label>RIR</label><input type="text" inputmode="decimal" class="e-rir" value="${p.rir ?? ""}" /></div>
+              <div class="field"><label>Descanso</label><input type="text" class="e-descanso" value="${p.descanso || ""}" /></div>
+            </div>
+            <button class="skip-btn e-guardar">Guardar cambios</button>
+          </div>`).join("")}
+      </main>`;
+
+    document.getElementById("btn-salir").addEventListener("click", cerrarSesion);
+    document.getElementById("link-volver-editar").addEventListener("click", (e) => { e.preventDefault(); renderHistorialPlanes(sesion); });
+    document.querySelectorAll("#pills-semana-edicion .pill").forEach((btn) => {
+      btn.addEventListener("click", () => pintarSemanaEdicion(btn.dataset.id));
+    });
+    document.querySelectorAll("#pills-dia-edicion .pill").forEach((btn) => {
+      btn.addEventListener("click", () => pintarDiaEdicion(btn.dataset.id, semanaId, diasDeLaSemana));
+    });
+    document.querySelectorAll(".exercise").forEach((el) => {
+      el.querySelector(".e-guardar").addEventListener("click", async (e) => {
+        const btn = e.target;
+        btn.disabled = true;
+        btn.textContent = "Guardando…";
+        try {
+          await fetch(`${SUPABASE_URL}/rest/v1/series_prescritas?id=eq.${el.dataset.sp}`, {
+            method: "PATCH",
+            headers: { ...headersRest(sesion), Prefer: "return=minimal" },
+            body: JSON.stringify({
+              series: parseInt(el.querySelector(".e-series").value) || 1,
+              reps_objetivo: el.querySelector(".e-reps").value.trim() || null,
+              rir: el.querySelector(".e-rir").value.trim() !== "" ? parseFloat(el.querySelector(".e-rir").value.replace(",", ".")) : null,
+              descanso: el.querySelector(".e-descanso").value.trim() || null,
+            }),
+          });
+          btn.textContent = "Guardado";
+          setTimeout(() => { btn.textContent = "Guardar cambios"; btn.disabled = false; }, 1500);
+        } catch {
+          btn.textContent = "No se pudo guardar, reintentar";
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+
+  pintarSemanaEdicion(semanas[0].id);
 }
 
 
@@ -886,7 +991,7 @@ async function renderHome(sesion) {
   try {
     asignaciones = await restGet(
       sesion,
-      `asignaciones?usuario_id=eq.${sesion.usuario_id}&activa=eq.true&select=programa_id,programas(nombre,estado)&order=created_at.desc&limit=1`
+      `asignaciones?usuario_id=eq.${sesion.usuario_id}&activa=eq.true&select=programa_id,nota_entrenador,programas(nombre,estado)&order=created_at.desc&limit=1`
     );
   } catch {
     app.innerHTML = `${topbar(sesion.nombre, sesion)}<main><p class="form-error">No se pudo cargar tu programa.</p></main>`;
@@ -954,6 +1059,7 @@ async function renderHome(sesion) {
       ${topbar(asignacion.programas.nombre, sesion)}
       <main>
         <div style="display:flex;justify-content:center;margin-top:20px">${anilloProgreso(pctPrograma)}</div>
+        ${asignacion.nota_entrenador ? `<div class="week-row"><div class="week-row-top"><span>Nota de tu entrenador</span></div><p style="margin:6px 0 0;font-size:14px">${asignacion.nota_entrenador}</p></div>` : ""}
         <p class="pill-label" style="margin-top:20px">Tu progreso por semana — toca una semana para entrar</p>
         ${filasSemana}
         <div style="margin-top:24px">
