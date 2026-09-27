@@ -443,8 +443,24 @@ function conectarEjercicio(sesion, prescrita) {
   function pesoRedondeado(v) { return Math.round(v * 2) / 2; } // pasos de 0.5 kg
   const paso = { peso: 2.5, valor: 1 };
 
+  async function guardarFila(fila) {
+    const numero = parseInt(fila.dataset.set);
+    const peso = parseFloat(fila.querySelector('[data-campo="peso"] .value').dataset.valor);
+    const valor = parseFloat(fila.querySelector('[data-campo="valor"] .value').dataset.valor);
+    const completada = fila.querySelector(".check-btn").dataset.done === "1";
+    return guardarSerieRegistrada(sesion, {
+      serie_prescrita_id: prescrita.id,
+      usuario_id: sesion.usuario_id,
+      numero_serie: numero,
+      peso_real: peso,
+      valor_real: valor,
+      completada,
+      comentario: numero === 1 ? notaInput.value.trim() || null : null,
+    });
+  }
+
   el.querySelectorAll(".stepper button").forEach((btn) => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
       const stepper = btn.closest(".stepper");
       const campo = stepper.dataset.campo;
       const valorEl = stepper.querySelector(".value");
@@ -467,15 +483,23 @@ function conectarEjercicio(sesion, prescrita) {
           otroStepper.textContent = `${actual} kg`;
         });
       }
+
+      // Si la serie ya estaba marcada como hecha, el ajuste debe guardarse solo,
+      // sin obligar a desmarcar y volver a marcar.
+      const filaActual = stepper.closest(".set-row");
+      if (filaActual.querySelector(".check-btn").dataset.done === "1") {
+        try {
+          await guardarFila(filaActual);
+        } catch {
+          alert("No se pudo guardar el cambio. Revisa tu conexión.");
+        }
+      }
     });
   });
 
   el.querySelectorAll(".check-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const fila = btn.closest(".set-row");
-      const numero = parseInt(fila.dataset.set);
-      const peso = parseFloat(fila.querySelector('[data-campo="peso"] .value').dataset.valor);
-      const valor = parseFloat(fila.querySelector('[data-campo="valor"] .value').dataset.valor);
       const marcarComoHecho = btn.dataset.done !== "1";
 
       btn.classList.toggle("done", marcarComoHecho);
@@ -483,15 +507,7 @@ function conectarEjercicio(sesion, prescrita) {
       fila.querySelectorAll(".stepper").forEach((s) => s.classList.toggle("done", marcarComoHecho));
 
       try {
-        await guardarSerieRegistrada(sesion, {
-          serie_prescrita_id: prescrita.id,
-          usuario_id: sesion.usuario_id,
-          numero_serie: numero,
-          peso_real: peso,
-          valor_real: valor,
-          completada: marcarComoHecho,
-          comentario: numero === 1 ? notaInput.value.trim() || null : null,
-        });
+        await guardarFila(fila);
       } catch {
         // revertir visualmente si falla el guardado
         btn.classList.toggle("done", !marcarComoHecho);
