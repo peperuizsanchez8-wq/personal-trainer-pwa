@@ -1,7 +1,7 @@
 // Sube este número en CADA despliegue (aunque solo cambies una coma).
 // Es lo único que fuerza a los móviles que ya tienen la app instalada
 // a descargar la versión nueva en vez de quedarse con la de caché.
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v4";
 const CACHE_NAME = `entreno-shell-${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -11,8 +11,8 @@ const APP_SHELL = [
   "./app.js",
   "./manifest.json",
   "./favicon.svg",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png",
+  "./icon-192.png",
+  "./icon-512.png",
 ];
 
 self.addEventListener("install", (event) => {
