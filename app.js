@@ -997,12 +997,14 @@ function renderEjercicio(prescrita, registradas, ultimo) {
         <div class="set-index">${n}</div>
         <div class="stepper${done ? " done" : ""}" data-campo="peso">
           <button data-delta="-1">${icon("minus")}</button>
-          <div class="value num" data-valor="${peso}">${peso} kg</div>
+          <input type="text" inputmode="decimal" class="value num" value="${peso}" />
+          <span class="unidad">kg</span>
           <button data-delta="1">${icon("plus")}</button>
         </div>
         <div class="stepper${done ? " done" : ""}" data-campo="valor">
           <button data-delta="-1">${icon("minus")}</button>
-          <div class="value num" data-valor="${valor}">${valor} ${unidad}</div>
+          <input type="text" inputmode="numeric" class="value num" value="${valor}" />
+          <span class="unidad">${unidad}</span>
           <button data-delta="1">${icon("plus")}</button>
         </div>
         <button class="check-btn${done ? " done" : ""}" data-done="${done ? "1" : "0"}">${icon("check")}</button>
@@ -1033,8 +1035,8 @@ function conectarEjercicio(sesion, prescrita) {
 
   async function guardarFila(fila) {
     const numero = parseInt(fila.dataset.set);
-    const peso = parseFloat(fila.querySelector('[data-campo="peso"] .value').dataset.valor);
-    const valor = parseFloat(fila.querySelector('[data-campo="valor"] .value').dataset.valor);
+    const peso = parseFloat(fila.querySelector('[data-campo="peso"] .value').value) || 0;
+    const valor = parseFloat(fila.querySelector('[data-campo="valor"] .value').value) || 0;
     const completada = fila.querySelector(".check-btn").dataset.done === "1";
     return guardarSerieRegistrada(sesion, {
       serie_prescrita_id: prescrita.id,
@@ -1047,41 +1049,56 @@ function conectarEjercicio(sesion, prescrita) {
     });
   }
 
+  async function guardarSiYaMarcada(fila) {
+    if (fila.querySelector(".check-btn").dataset.done === "1") {
+      try {
+        await guardarFila(fila);
+      } catch {
+        alert("No se pudo guardar el cambio. Revisa tu conexión.");
+      }
+    }
+  }
+
+  function copiarPesoASiguientes(inputActual, valor) {
+    el.querySelectorAll(".set-row").forEach((otraFila) => {
+      const otroCheck = otraFila.querySelector(".check-btn");
+      if (otroCheck.dataset.done === "1") return;
+      const otroInput = otraFila.querySelector('[data-campo="peso"] .value');
+      if (otroInput === inputActual) return;
+      otroInput.value = valor;
+    });
+  }
+
   el.querySelectorAll(".stepper button").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const stepper = btn.closest(".stepper");
       const campo = stepper.dataset.campo;
-      const valorEl = stepper.querySelector(".value");
-      let actual = parseFloat(valorEl.dataset.valor);
+      const inputEl = stepper.querySelector(".value");
+      let actual = parseFloat(inputEl.value) || 0;
       actual = Math.max(0, actual + parseInt(btn.dataset.delta) * paso[campo]);
       if (campo === "peso") actual = pesoRedondeado(actual);
-      valorEl.dataset.valor = actual;
-      const unidad = valorEl.textContent.trim().split(" ").slice(-1)[0];
-      valorEl.textContent = `${actual} ${unidad}`;
+      inputEl.value = actual;
 
       // El peso suele ser el mismo en todas las series de un ejercicio:
       // lo copiamos a las series siguientes que aún no se hayan marcado como hechas.
-      if (campo === "peso") {
-        el.querySelectorAll(".set-row").forEach((otraFila) => {
-          const otroCheck = otraFila.querySelector(".check-btn");
-          if (otroCheck.dataset.done === "1") return;
-          const otroStepper = otraFila.querySelector('[data-campo="peso"] .value');
-          if (otroStepper === valorEl) return;
-          otroStepper.dataset.valor = actual;
-          otroStepper.textContent = `${actual} kg`;
-        });
-      }
+      if (campo === "peso") copiarPesoASiguientes(inputEl, actual);
 
       // Si la serie ya estaba marcada como hecha, el ajuste debe guardarse solo,
       // sin obligar a desmarcar y volver a marcar.
-      const filaActual = stepper.closest(".set-row");
-      if (filaActual.querySelector(".check-btn").dataset.done === "1") {
-        try {
-          await guardarFila(filaActual);
-        } catch {
-          alert("No se pudo guardar el cambio. Revisa tu conexión.");
-        }
-      }
+      await guardarSiYaMarcada(stepper.closest(".set-row"));
+    });
+  });
+
+  // Escribir el número directamente también funciona, no solo los botones +/-.
+  el.querySelectorAll(".stepper input.value").forEach((inputEl) => {
+    inputEl.addEventListener("change", async () => {
+      const stepper = inputEl.closest(".stepper");
+      const campo = stepper.dataset.campo;
+      let actual = parseFloat(inputEl.value.replace(",", ".")) || 0;
+      if (campo === "peso") actual = pesoRedondeado(actual);
+      inputEl.value = actual;
+      if (campo === "peso") copiarPesoASiguientes(inputEl, actual);
+      await guardarSiYaMarcada(stepper.closest(".set-row"));
     });
   });
 
