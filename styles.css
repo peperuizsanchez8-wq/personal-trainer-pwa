@@ -39,6 +39,8 @@ body {
   font-feature-settings: "tnum";
 }
 
+input, select, textarea { min-width: 0; max-width: 100%; }
+
 button, input {
   font-family: inherit;
   font-size: inherit;
@@ -207,6 +209,7 @@ p.lead { color: var(--steel); margin: 0 0 24px; font-size: 15px; }
 .week-bar-fill.danger { background: var(--danger); }
 .week-status.danger { color: var(--danger); }
 
+.volumen-detalle summary { list-style: none; cursor: pointer; }
 .volumen-detalle summary::-webkit-details-marker { display: none; }
 .volumen-detalle summary::before {
   content: "▸";
@@ -258,13 +261,22 @@ p.lead { color: var(--steel); margin: 0 0 24px; font-size: 15px; }
   color: var(--steel);
 }
 
+/* Las columnas usan minmax(0, 1fr): así el ancho de los campos de texto (que traen un mínimo
+   por defecto) nunca ensancha la fila más allá de la pantalla. */
+.set-head,
 .set-row {
   display: grid;
-  grid-template-columns: 20px 1fr 1fr 40px;
+  grid-template-columns: 20px minmax(0, 1fr) minmax(0, 1fr) 40px;
   gap: 8px;
   align-items: center;
-  margin-top: 12px;
 }
+.set-head {
+  margin-top: 14px;
+  font-size: 11px;
+  color: var(--steel);
+  text-align: center;
+}
+.set-row { margin-top: 10px; }
 
 .set-row .set-index {
   font-size: 13px;
@@ -273,13 +285,14 @@ p.lead { color: var(--steel); margin: 0 0 24px; font-size: 15px; }
 }
 
 .stepper {
-  display: flex;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
   align-items: center;
-  justify-content: space-between;
+  min-width: 0;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 6px 6px;
+  padding: 6px 4px;
 }
 
 .stepper.done { border-color: var(--good); background: var(--good-bg); }
@@ -297,23 +310,23 @@ p.lead { color: var(--steel); margin: 0 0 24px; font-size: 15px; }
 }
 .stepper button:active { background: var(--line); }
 
+/* 16 px como mínimo: con menos, el iPhone hace zoom al tocar el campo para escribir */
 .stepper .value {
-  font-weight: 600;
-  font-size: 15px;
-  text-align: center;
-  flex: 1;
+  width: 100%;
   min-width: 0;
+  font-weight: 600;
+  font-size: 16px;
+  text-align: center;
   border: none;
   background: none;
   padding: 0;
   outline: none;
 }
 .stepper .value:focus { text-decoration: underline; text-decoration-color: var(--accent); }
-.stepper .unidad {
-  font-size: 11px;
-  color: var(--steel);
-  white-space: nowrap;
-}
+
+/* Vista de solo lectura del entrenador: sin botones, el valor centrado */
+.stepper.lectura { display: flex; justify-content: center; padding: 10px 6px; }
+.stepper.lectura .value { width: auto; }
 
 .check-btn {
   width: 36px;
@@ -337,33 +350,35 @@ p.lead { color: var(--steel); margin: 0 0 24px; font-size: 15px; }
 .exercise-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   margin-top: 14px;
 }
 
 .note-input {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   border: none;
   border-bottom: 1px solid var(--line);
   background: none;
   padding: 6px 0;
-  font-size: 14px;
+  font-size: 16px;
 }
 .note-input:focus { outline: none; border-bottom-color: var(--accent); }
 .note-input::placeholder { color: var(--steel); }
 
 .rir-input {
-  flex: 0 0 56px;
+  flex: 0 0 64px;
+  width: 64px;
+  min-width: 0;
   border: none;
   border-bottom: 1px solid var(--line);
   background: none;
   padding: 6px 0;
-  font-size: 14px;
+  font-size: 16px;
   text-align: center;
 }
 .rir-input:focus { outline: none; border-bottom-color: var(--accent); }
-.rir-input::placeholder { color: var(--steel); font-size: 11px; }
+.rir-input::placeholder { color: var(--steel); font-size: 12px; }
 
 .skip-btn {
   flex: 0 0 auto;
@@ -520,3 +535,14 @@ button.secundario {
   color: var(--ink);
 }
 button.secundario:active { background: var(--line); }
+
+/* Móviles estrechos (iPhone SE y similares): botones y columnas algo más compactos
+   para que el peso (p. ej. 102.5) siga cabiendo entero. */
+@media (max-width: 360px) {
+  main { padding-left: 12px; padding-right: 12px; }
+  .set-head,
+  .set-row { grid-template-columns: 14px minmax(0, 1fr) minmax(0, 1fr) 32px; gap: 5px; }
+  .stepper { grid-template-columns: 22px minmax(0, 1fr) 22px; padding: 6px 2px; }
+  .stepper button { width: 22px; }
+  .check-btn { width: 30px; height: 30px; }
+}
