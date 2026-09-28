@@ -658,7 +658,7 @@ function renderDetalleAlumno(sesion, f) {
       <div style="display:flex;justify-content:center;margin-top:12px">${anilloProgreso(f.pct, f.programaNombre)}</div>
 
       <p class="pill-label" style="margin-top:20px">Nota para ${esc(f.alumno.nombre)}</p>
-      <textarea id="nota-entrenador" placeholder="Ej. baja el peso en sentadilla, muy buen progreso en press banca…" style="width:100%;min-height:70px;border:1px solid var(--line);background:var(--surface);border-radius:var(--radius);padding:10px 12px;font-family:inherit;font-size:14px">${esc(f.notaEntrenador)}</textarea>
+      <textarea id="nota-entrenador" placeholder="Ej. baja el peso en sentadilla, muy buen progreso en press banca…" style="width:100%;min-height:70px;border:1px solid var(--line);background:var(--surface);border-radius:var(--radius);padding:10px 12px;font-family:inherit;font-size:16px">${esc(f.notaEntrenador)}</textarea>
       <button class="skip-btn" id="btn-guardar-nota" style="margin-top:6px">Guardar nota</button>
 
       <p class="pill-label" style="margin-top:20px">Progresión de peso</p>
@@ -762,8 +762,8 @@ function renderEjercicioSoloLectura(prescrita, registradas) {
     return `
       <div class="set-row">
         <div class="set-index">${n}</div>
-        <div class="stepper${done ? " done" : ""}"><div class="value num" style="width:100%;text-align:center">${peso} kg</div></div>
-        <div class="stepper${done ? " done" : ""}"><div class="value num" style="width:100%;text-align:center">${valor} ${unidad}</div></div>
+        <div class="stepper lectura${done ? " done" : ""}"><div class="value num">${peso} kg</div></div>
+        <div class="stepper lectura${done ? " done" : ""}"><div class="value num">${valor} ${unidad}</div></div>
         <div class="check-btn${done ? " done" : ""}">${icon("check")}</div>
       </div>`;
   }).join("");
@@ -1204,7 +1204,7 @@ async function renderEditarPrograma(sesion, programaId, nombrePrograma) {
         ${prescritas.map((p) => `
           <div class="exercise" data-sp="${p.id}">
             <div class="exercise-head"><h2>${esc(p.ejercicios_catalogo.nombre)}</h2></div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+            <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin-top:10px">
               <div class="field"><label>Series</label><input type="text" inputmode="numeric" class="e-series" value="${p.series}" /></div>
               <div class="field"><label>Reps objetivo</label><input type="text" class="e-reps" value="${esc(p.reps_objetivo)}" /></div>
               <div class="field"><label>RIR</label><input type="text" inputmode="decimal" class="e-rir" value="${p.rir ?? ""}" /></div>
@@ -1516,7 +1516,7 @@ async function renderHome(sesion) {
     const filas = Object.entries(porGrupo).sort((a, b) => b[1] - a[1]);
     el.innerHTML = `
       <details class="volumen-detalle" style="margin-top:18px">
-        <summary class="pill-label" style="margin:0;cursor:pointer;display:list-item">Volumen de la semana</summary>
+        <summary class="pill-label" style="margin:0">Volumen de la semana</summary>
         ${filas.map(([g, n]) => `
           <div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid var(--line);font-size:14px">
             <span>${esc(g)}</span><span class="num" style="color:var(--steel)">${n} series</span>
@@ -1589,13 +1589,11 @@ function renderEjercicio(prescrita, registradas, ultimo) {
         <div class="stepper${done ? " done" : ""}" data-campo="peso">
           <button data-delta="-1">${icon("minus")}</button>
           <input type="text" inputmode="decimal" class="value num" value="${peso}" />
-          <span class="unidad">kg</span>
           <button data-delta="1">${icon("plus")}</button>
         </div>
         <div class="stepper${done ? " done" : ""}" data-campo="valor">
           <button data-delta="-1">${icon("minus")}</button>
           <input type="text" inputmode="numeric" class="value num" value="${valor}" />
-          <span class="unidad">${unidad}</span>
           <button data-delta="1">${icon("plus")}</button>
         </div>
         <button class="check-btn${done ? " done" : ""}" data-done="${done ? "1" : "0"}">${icon("check")}</button>
@@ -1611,6 +1609,7 @@ function renderEjercicio(prescrita, registradas, ultimo) {
         <h2>${esc(prescrita.ejercicios_catalogo.nombre)}</h2>
         <div class="meta">${prescrita.series} series · ${esc(prescrita.reps_objetivo)} ${unidad === "s" ? "" : "reps"} · RIR ${prescrita.rir ?? "–"} · ${esc(prescrita.descanso)}</div>
       </div>
+      <div class="set-head"><span></span><span>Peso (kg)</span><span>${esSegundos ? "Segundos" : "Repeticiones"}</span><span></span></div>
       ${filas}
       <div class="exercise-footer">
         <input class="note-input" type="text" placeholder="Nota (opcional)" value="${previaUno && previaUno.comentario ? esc(previaUno.comentario) : ""}" />
@@ -1618,7 +1617,7 @@ function renderEjercicio(prescrita, registradas, ultimo) {
         <button class="skip-btn${sinTiempo ? " skipped" : ""}">${sinTiempo ? "Marcado sin tiempo · deshacer" : "No me dio tiempo"}</button>
       </div>
       <details class="volumen-detalle" style="margin-top:14px" data-prog="1">
-        <summary class="pill-label" style="margin:0;cursor:pointer;display:list-item">Mi progresión</summary>
+        <summary class="pill-label" style="margin:0">Mi progresión</summary>
         <div class="grafico-progresion-alumno"></div>
       </details>
     </div>`;
