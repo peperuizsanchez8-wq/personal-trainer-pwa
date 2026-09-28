@@ -481,3 +481,42 @@ button.primary:disabled { background: var(--line); color: var(--steel); }
   .topbar { background: #0d1117; }
   button.primary { color: #fff; }
 }
+
+/* ---------- Ventanas (alta de usuarios, PIN nuevo) ---------- */
+
+.modal-fondo {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(20, 24, 31, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 50;
+}
+.modal {
+  background: var(--paper);
+  border-radius: 12px;
+  padding: 20px;
+  width: 100%;
+  max-width: 360px;
+}
+.modal-acciones { display: flex; gap: 8px; margin-top: 16px; }
+.modal-acciones button { flex: 1; }
+.pin-grande {
+  font-size: 44px;
+  font-weight: 700;
+  letter-spacing: 10px;
+  text-align: center;
+  margin: 14px 0 0 10px;
+}
+button.secundario {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+button.secundario:active { background: var(--line); }
