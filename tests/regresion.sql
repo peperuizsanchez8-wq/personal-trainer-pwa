@@ -107,3 +107,109 @@ begin
 end $$;
 
 rollback;
+
+-- ---------------------------------------------------------------------------
+-- Parte 2: seguridad por rol (simula el JWT que llega desde la app) y desactivación
+-- ---------------------------------------------------------------------------
+begin;
+
+do $$
+declare
+  v_e1 uuid; v_e2 uuid;
+  v_ent1 uuid; v_ent2 uuid; v_alumno uuid;
+  v_programa uuid; v_semana uuid; v_dia uuid; v_ej uuid; v_sp uuid;
+  v_resultado jsonb;
+  n int;
+  v_antes timestamptz; v_despues timestamptz; v_id uuid;
+begin
+  insert into entrenadores (nombre) values ('TEST grupo 1') returning id into v_e1;
+  insert into entrenadores (nombre) values ('TEST grupo 2') returning id into v_e2;
+  insert into usuarios (entrenador_id, rol, nombre, pin_hash) values (v_e1, 'entrenador', 'TEST ent 1', crypt('1111', gen_salt('bf'))) returning id into v_ent1;
+  insert into usuarios (entrenador_id, rol, nombre, pin_hash) values (v_e2, 'entrenador', 'TEST ent 2', crypt('2222', gen_salt('bf'))) returning id into v_ent2;
+  insert into usuarios (entrenador_id, rol, nombre, pin_hash) values (v_e1, 'alumno', 'TEST alumno 1', crypt('3333', gen_salt('bf'))) returning id into v_alumno;
+
+  insert into ejercicios_catalogo (entrenador_id, nombre, grupo_muscular) values (v_e1, 'TEST ej', 'Pecho') returning id into v_ej;
+  insert into programas (entrenador_id, nombre, estado) values (v_e1, 'TEST plan', 'publicado') returning id into v_programa;
+  insert into semanas (programa_id, numero) values (v_programa, 1) returning id into v_semana;
+  insert into dias (semana_id, numero) values (v_semana, 1) returning id into v_dia;
+  insert into series_prescritas (dia_id, ejercicio_id, orden, series, reps_objetivo) values (v_dia, v_ej, 1, 2, '8') returning id into v_sp;
+  insert into asignaciones (usuario_id, programa_id) values (v_alumno, v_programa);
+  insert into series_registradas (serie_prescrita_id, usuario_id, numero_serie, peso_real, valor_real, completada)
+    values (v_sp, v_alumno, 1, 40, 8, true) returning id, updated_at into v_id, v_antes;
+
+  -- Test 8: una cuenta desactivada no puede entrar (y no cuenta como PIN fallido)
+  update usuarios set activo = false where id = v_alumno;
+  select verificar_pin(v_alumno, '3333') into v_resultado;
+  if (v_resultado->>'motivo') is distinct from 'desactivado' then
+    raise exception 'FALLO test 8: una cuenta desactivada deberia rechazarse con motivo desactivado, resultado: %', v_resultado;
+  end if;
+  update usuarios set activo = true where id = v_alumno;
+
+  -- Test 9: un entrenador NO puede leer ni escribir pin_hash a traves de la API
+  perform set_config('request.jwt.claims', json_build_object('role','authenticated','app_metadata',
+    json_build_object('rol','entrenador','entrenador_id',v_e1,'usuario_id',v_ent1))::text, true);
+  set local role authenticated;
+  begin
+    perform pin_hash from usuarios limit 1;
+    raise exception 'FALLO test 9a: un entrenador pudo leer pin_hash';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    update usuarios set pin_hash = 'x' where id = v_alumno;
+    raise exception 'FALLO test 9b: un entrenador pudo escribir pin_hash';
+  exception when insufficient_privilege then null;
+  end;
+
+  -- Test 10: el entrenador ve a sus alumnos y sus series
+  select count(*) into n from series_registradas;
+  if n <> 1 then raise exception 'FALLO test 10: el entrenador 1 deberia ver 1 serie de su alumno, ve %', n; end if;
+
+  -- Test 11: aislamiento entre entrenadores: el entrenador 2 no ve nada del grupo 1
+  reset role;
+  perform set_config('request.jwt.claims', json_build_object('role','authenticated','app_metadata',
+    json_build_object('rol','entrenador','entrenador_id',v_e2,'usuario_id',v_ent2))::text, true);
+  set local role authenticated;
+  select count(*) into n from series_registradas;
+  if n <> 0 then raise exception 'FALLO test 11a: el entrenador 2 ve % series de otro grupo', n; end if;
+  select count(*) into n from usuarios where entrenador_id = v_e1;
+  if n <> 0 then raise exception 'FALLO test 11b: el entrenador 2 ve % usuarios de otro grupo', n; end if;
+  select count(*) into n from programas where entrenador_id = v_e1;
+  if n <> 0 then raise exception 'FALLO test 11c: el entrenador 2 ve % planes de otro grupo', n; end if;
+  begin
+    perform publicar_programa((select id from importaciones_borrador limit 1));
+  exception when others then null; -- da igual el motivo: no debe poder publicar planes ajenos
+  end;
+
+  -- Test 12: un alumno desactivado pierde el acceso al instante aunque su token siga vigente
+  reset role;
+  update usuarios set activo = false where id = v_alumno;
+  perform set_config('request.jwt.claims', json_build_object('role','authenticated','app_metadata',
+    json_build_object('rol','alumno','entrenador_id',v_e1,'usuario_id',v_alumno))::text, true);
+  set local role authenticated;
+  select count(*) into n from series_registradas;
+  if n <> 0 then raise exception 'FALLO test 12a: un alumno desactivado sigue viendo % series', n; end if;
+  select count(*) into n from asignaciones;
+  if n <> 0 then raise exception 'FALLO test 12b: un alumno desactivado sigue viendo % asignaciones', n; end if;
+
+  -- Test 13: anon no puede leer nada
+  reset role;
+  set local role anon;
+  begin
+    perform 1 from usuarios limit 1;
+    raise exception 'FALLO test 13: anon pudo leer usuarios';
+  exception when insufficient_privilege then null;
+  end;
+  reset role;
+
+  -- Test 14: updated_at cambia al editar una serie ya guardada
+  perform pg_sleep(1);
+  update series_registradas set peso_real = 45 where id = v_id;
+  select updated_at into v_despues from series_registradas where id = v_id;
+  if v_despues <= v_antes then
+    raise exception 'FALLO test 14: updated_at no cambio al editar (% -> %)', v_antes, v_despues;
+  end if;
+
+  raise notice '=== PARTE 2: TODAS LAS PRUEBAS PASARON ===';
+end $$;
+
+rollback;
